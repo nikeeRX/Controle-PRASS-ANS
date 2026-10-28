@@ -38,35 +38,19 @@ if USE_POSTGRES:
     from psycopg2.extras import RealDictCursor
 
 
-def get_db_conn():
-    if USE_POSTGRES:
-        return psycopg2.connect(DATABASE_URL)
-    conn = sqlite3.connect("prass_local.db")
-    conn.row_factory = sqlite3.Row
-    return conn
+import time
 
+DB_INITIALIZED = False
 
-def db_query(sql, params=(), fetch=True, commit=False):
-    conn = get_db_conn()
-    try:
-        if USE_POSTGRES:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute(sql, params)
-        else:
-            sql_sqlite = sql.replace("%s", "?")
-            cur = conn.cursor()
-            cur.execute(sql_sqlite, params)
-
-        res = None
-        if fetch:
-            rows = cur.fetchall()
-            res = [dict(r) for r in rows]
-        if commit:
-            conn.commit()
-        return res
-    finally:
-        conn.close()
-
+app.before_request
+def garantir_banco_inicializado():
+    global DB_INITIALIZED
+    if not DB_INITIALIZED:
+        try:
+            init_db()
+            DB_INITIALIZED = True
+        except Exception as e:
+            print(f"Aviso: Aguardando PostgreSQL ficar disponível: {e}")
 
 def init_db():
     conn = get_db_conn()
@@ -221,7 +205,7 @@ def init_db():
 
 
 # Inicializa tabelas e seed ao subir o servidor
-init_db()
+#init_db()
 
 
 # ==============================================================================
