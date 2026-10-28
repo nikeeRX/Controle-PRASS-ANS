@@ -1,5 +1,6 @@
-fastapi
-uvicorn
-pandas
-openpyxl
-python-multipart
+Flask==3.0.3
+psycopg2-binary==2.9.9
+gunicorn==22.0.0
+pypdf==4.3.1
+reportlab==4.2.2
+Pillow==10.4.0
