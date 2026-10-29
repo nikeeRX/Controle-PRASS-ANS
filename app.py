@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
 import io
+import time
 import json
 import sqlite3
 from datetime import datetime
 from flask import (
-    Flask, request, jsonify, Response, send_file, render_template_string
+    Flask, request, jsonify, send_file, render_template_string
 )
 import pypdf
 from reportlab.lib.pagesizes import A4
@@ -13,7 +14,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
+    SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 )
 from PIL import Image
 
@@ -24,33 +25,76 @@ from seed_data import (
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploads
 
-# ==============================================================================
-# CAMADA DE BANCO DE DADOS (POSTGRESQL NO RAILWAY COM FALLBACK LOCAL SQLITE)
-# ==============================================================================
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# ==============================================================================
+# CAMADA DE BANCO DE DADOS (AUTO-DETECÇÃO POSTGRESQL RAILWAY + FALLBACK SQLITE)
+# ==============================================================================
+def obter_url_postgres():
+    """Localiza automaticamente a URL do PostgreSQL no Railway em qualquer variável disponível."""
+    for nome_var in ("DATABASE_PUBLIC_URL", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
+        val = os.environ.get(nome_var, "").strip()
+        if val and not val.startswith("${{"):
+            if val.startswith("postgres://"):
+                val = val.replace("postgres://", "postgresql://", 1)
+            return val
+
+    # Caso o Railway tenha injetado PGHOST, PGUSER, PGPASSWORD, PGDATABASE, PGPORT separados
+    pghost = os.environ.get("PGHOST", "").strip()
+    pguser = os.environ.get("PGUSER", "").strip()
+    pgpass = os.environ.get("PGPASSWORD", "").strip()
+    pgdb = os.environ.get("PGDATABASE", "").strip()
+    pgport = os.environ.get("PGPORT", "5432").strip()
+    if pghost and pguser and pgdb:
+        return f"postgresql://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}"
+
+    return ""
+
+
+DATABASE_URL = obter_url_postgres()
 USE_POSTGRES = bool(DATABASE_URL)
+DB_INITIALIZED = False
 
 if USE_POSTGRES:
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
 
-import time
+def get_db_conn():
+    if USE_POSTGRES:
+        ultimo_erro = None
+        for _ in range(5):
+            try:
+                return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+            except Exception as e:
+                ultimo_erro = e
+                time.sleep(1.2)
+        raise ultimo_erro
+    conn = sqlite3.connect("prass_local.db")
+    conn.row_factory = sqlite3.Row
+    return conn
 
-DB_INITIALIZED = False
 
-app.before_request
-def garantir_banco_inicializado():
-    global DB_INITIALIZED
-    if not DB_INITIALIZED:
-        try:
-            init_db()
-            DB_INITIALIZED = True
-        except Exception as e:
-            print(f"Aviso: Aguardando PostgreSQL ficar disponível: {e}")
+def db_query(sql, params=(), fetch=True, commit=False):
+    conn = get_db_conn()
+    try:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(sql, params)
+        else:
+            sql_sqlite = sql.replace("%s", "?")
+            cur = conn.cursor()
+            cur.execute(sql_sqlite, params)
+
+        res = None
+        if fetch:
+            rows = cur.fetchall()
+            res = [dict(r) for r in rows]
+        if commit:
+            conn.commit()
+        return res
+    finally:
+        conn.close()
+
 
 def init_db():
     conn = get_db_conn()
@@ -166,7 +210,6 @@ def init_db():
                 commit=True,
             )
 
-        # Garante todas as demandas fixas (Status 08/2026 a Status 08/2027 + Complemento ANS 26/10)
         for idx_d, nome_dem in enumerate(DEMANDAS_FIXAS_PADRAO, start=1):
             ja_tem = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -180,7 +223,6 @@ def init_db():
                     commit=True
                 )
 
-        # Popula checklists iniciais na demanda "Complemento ANS 26/10" se aplicável
         if cod in CHECKLISTS_INICIAIS_COMPLEMENTO:
             dem_row = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -204,15 +246,21 @@ def init_db():
                             )
 
 
-# Inicializa tabelas e seed ao subir o servidor
-#init_db()
+@app.before_request
+def garantir_banco_inicializado():
+    global DB_INITIALIZED
+    if not DB_INITIALIZED:
+        try:
+            init_db()
+            DB_INITIALIZED = True
+        except Exception as e:
+            print(f"Aviso ao inicializar banco: {e}")
 
 
 # ==============================================================================
 # FUNÇÕES AUXILIARES DE ANÁLISE DE ANEXOS E GERAÇÃO DE PDF UNIFICADO
 # ==============================================================================
 def extrair_resumo_arquivo(nome_arquivo, raw_bytes):
-    """Analisa automaticamente o conteúdo do arquivo no upload para subsidiar a redação do Ofício."""
     ext = os.path.splitext(nome_arquivo.lower())[1]
     try:
         if ext == ".pdf":
@@ -247,12 +295,6 @@ def extrair_resumo_arquivo(nome_arquivo, raw_bytes):
 
 
 def calcular_semaforo_setores(demanda_id, areas_atribuidas):
-    """
-    Calcula o status de cada setor (CODER, COCAP, CONEC) na demanda selecionada:
-    - VERMELHO: Não respondido (nenhum item cadastrado ou nenhum item concluído e sem anexos)
-    - AMARELO: Respondendo (há itens cadastrados com algum anexo ou conclusão parcial)
-    - VERDE: Respondido (há itens cadastrados e 100% deles estão concluídos)
-    """
     rows = db_query(
         """SELECT c.id, c.setor, c.concluido, COUNT(a.id) AS qtd_anexos
            FROM checklist_evidencias c
@@ -300,7 +342,6 @@ def calcular_semaforo_setores(demanda_id, areas_atribuidas):
 
 
 def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anexos):
-    """Constrói a minuta completa do Ofício analisando todos os itens e anexos da demanda."""
     data_str = datetime.now().strftime("%d/%m/%Y")
     linhas = [
         f"Brasília, {data_str}",
@@ -318,7 +359,6 @@ def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anex
         ""
     ]
 
-    # Se houver histórico na planilha para essa demanda fixa, inclui como referência
     hist = json.loads(item_row.get("historico_json") or "{}")
     if demanda_row["nome"] in hist and hist[demanda_row["nome"]].strip() and hist[demanda_row["nome"]].strip() != "N/A":
         linhas.append("2. CONSIDERAÇÕES EXECUTIVAS DO PERÍODO")
@@ -394,7 +434,6 @@ def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anex
 
 
 def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivos_excel, lista_pdfs_anexados):
-    """Renderiza o Ofício aprovado pelo analista em páginas PDF elegantes usando ReportLab."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -461,7 +500,6 @@ def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivo
             story.append(Spacer(1, 4))
             continue
 
-        # Escapa caracteres especiais de XML para o ReportLab
         l_safe = (
             l_strip.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -481,7 +519,6 @@ def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivo
         else:
             story.append(Paragraph(l_safe, st_corpo))
 
-    # Quadro Resumo de Anexos no final do Ofício
     story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#003366")))
     story.append(Spacer(1, 6))
@@ -507,7 +544,6 @@ def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivo
 
 
 def converter_imagem_para_pdf_bytes(img_bytes):
-    """Converte anexos PNG/JPG em página PDF A4 para entrar na fusão do PDF único."""
     im = Image.open(io.BytesIO(img_bytes))
     if im.mode in ("RGBA", "P"):
         im = im.convert("RGB")
@@ -532,7 +568,6 @@ def api_bootstrap():
             "SELECT * FROM demandas WHERE item_codigo = %s ORDER BY ordem ASC, id ASC",
             (cod,)
         )
-        # Escolhe a demanda ativa para calcular o semáforo do item
         dem_ativa = next((d for d in demandas if d["nome"] == demanda_selecionada_nome), None)
         if not dem_ativa and demandas:
             dem_ativa = demandas[0]
@@ -716,7 +751,6 @@ def api_remover_anexo(anexo_id):
     if row:
         chk_id = row[0]["checklist_id"]
         db_query("DELETE FROM anexos WHERE id = %s", (anexo_id,), fetch=False, commit=True)
-        # Regra de negócio: ao remover um anexo, o item volta automaticamente para Pendente
         db_query(
             "UPDATE checklist_evidencias SET concluido = %s WHERE id = %s",
             (False, chk_id),
@@ -822,10 +856,6 @@ def api_salvar_oficio(demanda_id):
 
 @app.route("/api/demanda/<int:demanda_id>/exportar-pdf-unificado", methods=["POST"])
 def api_exportar_pdf_unificado(demanda_id):
-    """
-    Salva o texto do Ofício aprovado/editado pelo analista, gera o PDF do Ofício em primeiro lugar
-    e mescla logo abaixo todos os anexos PDF/Imagens da demanda, listando os arquivos Excel pelo nome.
-    """
     body = request.get_json(force=True)
     texto_oficio = body.get("texto_oficio", "").strip()
 
@@ -872,7 +902,6 @@ def api_exportar_pdf_unificado(demanda_id):
                 })
                 anexos_para_merge.append((ext, a["nome_arquivo"], bytes(a["conteudo"])))
 
-    # 1. Gera o PDF do Ofício nas primeiras páginas
     capa_buffer = gerar_pdf_capa_oficio(
         it_row["titulo"],
         dem_row["nome"],
@@ -881,7 +910,6 @@ def api_exportar_pdf_unificado(demanda_id):
         lista_pdfs_info
     )
 
-    # 2. Une o Ofício + Todos os PDFs/Imagens anexados abaixo usando pypdf.PdfWriter
     writer = pypdf.PdfWriter()
     capa_reader = pypdf.PdfReader(capa_buffer)
     for page in capa_reader.pages:
@@ -950,7 +978,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         height: 100vh;
         overflow: hidden;
     }
-    /* CABEÇALHO SUPERIOR */
     header {
         background: linear-gradient(90deg, var(--azul-escuro) 0%, var(--azul-postal) 100%);
         color: #FFF;
@@ -971,8 +998,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-size: 12px;
         font-weight: 600;
     }
-
-    /* LAYOUT PRINCIPAL DIVIDIDO EM SIDEBAR (ITENS PRASS) E PAINEL CENTRAL */
     .main-container {
         display: flex;
         flex: 1;
@@ -1041,7 +1066,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         line-height: 1.35;
         margin-bottom: 8px;
     }
-    /* SEMÁFORO DE ÁREAS NO CARD DO ITEM */
     .semaforo-row {
         display: flex;
         align-items: center;
@@ -1062,8 +1086,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .area-pill.AMARELO { background: var(--amarelo-status-bg); color: #92400E; border: 1px solid #FDE68A; }
     .area-pill.VERDE { background: var(--verde-bg); color: #0F5132; border: 1px solid #BADBCC; }
     .area-pill.INATIVO { background: #F1F5F9; color: #94A3B8; border: 1px dashed #CBD5E1; text-decoration: line-through; }
-
-    /* ÁREA DE CONTEÚDO DIREITA */
     .workspace {
         flex: 1;
         overflow-y: auto;
@@ -1097,8 +1119,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         flex-shrink: 0;
         align-items: center;
     }
-
-    /* DROPDOWN DE ATRIBUIÇÃO DE ÁREAS */
     .dropdown-areas {
         position: relative;
         display: inline-block;
@@ -1136,8 +1156,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         padding: 5px 0;
         cursor: pointer;
     }
-
-    /* OS 3 BOTÕES DA PLANILHA MODELO (APONTAMENTO ANS, MEDIDAS IMPLEMENTADAS E OBSERVAÇÕES) */
     .planilha-buttons-row {
         display: flex;
         gap: 10px;
@@ -1182,8 +1200,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         overflow-y: auto;
     }
     .info-drawer.open { display: block; }
-
-    /* SELETORES: TIPO DE DEMANDA + DEMANDA + COORDENAÇÃO (CODER / COCAP / CONEC) */
     .controls-bar {
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
@@ -1250,8 +1266,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         color: #FFFFFF;
         border-color: var(--amarelo-postal);
     }
-
-    /* PAINEL DO CHECKLIST DA COORDENAÇÃO */
     .checklist-panel {
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
@@ -1331,8 +1345,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-size: 12.5px;
         cursor: pointer;
     }
-
-    /* CARDS DE CADA ITEM DO CHECKLIST */
     .chk-item-card {
         border: 1px solid #E2E8F0;
         border-radius: 8px;
@@ -1385,8 +1397,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .tool-btn:hover { background: #E2E8F0; }
     .tool-btn.concluir-on { background: var(--verde); color: #FFF; border-color: var(--verde); }
     .tool-btn.danger { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }
-
-    /* LISTA DE ANEXOS DE CADA ITEM */
     .anexos-box {
         background: #F8FAFC;
         border-radius: 6px;
@@ -1411,8 +1421,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-weight: 700;
         color: var(--azul-postal);
     }
-
-    /* MODAL DO EDITOR DE OFÍCIO E APROVAÇÃO */
     .modal-backdrop {
         display: none;
         position: fixed;
@@ -1483,7 +1491,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </header>
 
 <div class="main-container">
-    <!-- BARRA LATERAL: MÓDULOS DOS ITENS DO PRASS -->
     <aside class="sidebar">
         <div class="sidebar-header">
             <span>MÓDULOS DO PRASS (GERED)</span>
@@ -1492,9 +1499,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="items-list" id="sidebarItems"></div>
     </aside>
 
-    <!-- ÁREA DE TRABALHO PRINCIPAL -->
     <main class="workspace">
-        <!-- CABEÇALHO DO ITEM DO PRASS + 3 BOTÕES DA PLANILHA MODELO -->
         <section class="top-item-banner">
             <div class="banner-header-row">
                 <div>
@@ -1502,7 +1507,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <div id="mainSemaforoBadges" class="semaforo-row" style="margin-top:8px;"></div>
                 </div>
                 <div class="banner-actions">
-                    <!-- CAIXA SUSPENSA DE ÁREAS ATRIBUÍDAS -->
                     <div class="dropdown-areas">
                         <button class="dropdown-btn" onclick="toggleAreasDropdown()">⚙️ Áreas Atribuídas ▼</button>
                         <div class="dropdown-menu" id="areasDropdownMenu">
@@ -1513,14 +1517,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                         </div>
                     </div>
 
-                    <!-- BOTÃO GERAR OFÍCIO E JUNTAR ANEXOS EM 1 SÓ PDF -->
                     <button class="btn-warning" onclick="abrirModalOficio()">
                         📄 Gerar Ofício + Unificar PDF
                     </button>
                 </div>
             </div>
 
-            <!-- OS 3 BOTÕES ABAIXO DO ITEM CONFORME PLANILHA MODELO -->
             <div class="planilha-buttons-row">
                 <button class="btn-info-planilha" id="btnDrawerApontamento" onclick="toggleDrawer('apontamento')">
                     <span>📌 1. Apontamento da ANS & Diagnóstico (Col. B)</span>
@@ -1539,7 +1541,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div class="info-drawer" id="drawerContent"></div>
         </section>
 
-        <!-- BARRA DE SELEÇÃO: TIPO DE DEMANDA (FIXA / AVULSA) + DEMANDA + BOTÕES SETOR (CODER / COCAP / CONEC) -->
         <section class="controls-bar">
             <div class="control-group">
                 <span class="control-label">Tipo:</span>
@@ -1561,7 +1562,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </section>
 
-        <!-- PAINEL DE CHECKLIST E EVIDÊNCIAS DO SETOR SELECIONADO -->
         <section class="checklist-panel">
             <div class="chk-header-row">
                 <div>
@@ -1579,19 +1579,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                 </div>
             </div>
 
-            <!-- CAMPO (+) PARA ADICIONAR NOVA EVIDÊNCIA NO CHECKLIST -->
             <div class="add-chk-row">
                 <input type="text" id="inputNovaEvidencia" placeholder="Digite o título da nova evidência para o checklist deste setor e pressione Enter ou clique em (+)..." onkeydown="if(event.key==='Enter') adicionarEvidencia()">
                 <button class="btn-success" onclick="adicionarEvidencia()">+ Adicionar Evidência</button>
             </div>
 
-            <!-- LISTA DE EVIDÊNCIAS -->
             <div id="listaChecklistContainer" style="display:flex; flex-direction:column; gap:10px;"></div>
         </section>
     </main>
 </div>
 
-<!-- MODAL DE APROVAÇÃO / EDIÇÃO DO OFÍCIO E DOWNLOAD DO PDF UNIFICADO -->
 <div class="modal-backdrop" id="modalOficio">
     <div class="modal-window">
         <div class="modal-header">
@@ -1619,7 +1616,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
 </div>
 
-<!-- INPUT FILE OCULTO PARA UPLOAD DE ANEXOS -->
 <input type="file" id="hiddenFileInput" multiple style="display:none" onchange="executarUploadAnexos()">
 
 <script>
@@ -1634,22 +1630,27 @@ let CHECKLIST_ATUAL = [];
 let CHK_ID_PARA_UPLOAD = null;
 
 async function carregarSistema() {
-    const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`);
-    const dados = await resp.json();
-    ESTADO_ITENS = dados.itens;
+    try {
+        const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`);
+        if (!resp.ok) throw new Error('Falha ao buscar dados no servidor');
+        const dados = await resp.json();
+        ESTADO_ITENS = dados.itens;
 
-    const badge = document.getElementById('dbBadge');
-    badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Railway Ativo' : '🟡 Banco Local SQLite (Modo Dev)';
+        const badge = document.getElementById('dbBadge');
+        badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Railway Ativo' : '🟡 Banco Interno SQLite Ativo';
 
-    if (!ITEM_ATUAL && ESTADO_ITENS.length > 0) {
-        // Inicia selecionando o 8.5.1 ou o primeiro item
-        ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === '8.5.1') || ESTADO_ITENS[0];
-    } else if (ITEM_ATUAL) {
-        ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === ITEM_ATUAL.codigo) || ESTADO_ITENS[0];
+        if (!ITEM_ATUAL && ESTADO_ITENS.length > 0) {
+            ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === '8.5.1') || ESTADO_ITENS[0];
+        } else if (ITEM_ATUAL) {
+            ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === ITEM_ATUAL.codigo) || ESTADO_ITENS[0];
+        }
+
+        renderizarSidebar();
+        renderizarItemAtual();
+    } catch (e) {
+        console.error(e);
+        document.getElementById('dbBadge').textContent = '🔴 Erro na API (Verifique Logs)';
     }
-
-    renderizarSidebar();
-    renderizarItemAtual();
 }
 
 function renderizarSidebar() {
@@ -1690,7 +1691,6 @@ function renderizarItemAtual() {
     if (!ITEM_ATUAL) return;
     document.getElementById('mainItemTitulo').textContent = ITEM_ATUAL.titulo;
 
-    // Atualiza checkboxes do menu suspenso de áreas atribuídas
     const checks = document.querySelectorAll('#areasDropdownMenu input[type="checkbox"]');
     checks.forEach(chk => {
         chk.checked = ITEM_ATUAL.areas_atribuidas.includes(chk.value);
@@ -2020,9 +2020,6 @@ async function removerAnexo(anexoId) {
     await carregarSistema();
 }
 
-// ==============================================================================
-// FLUXO DO OFÍCIO INTELIGENTE + EDIÇÃO + GERAÇÃO DO PDF UNIFICADO
-// ==============================================================================
 async function abrirModalOficio() {
     if (!DEMANDA_ATUAL_ID) {
         alert('Selecione uma demanda primeiro.');
@@ -2094,7 +2091,6 @@ async function aprovarEBaixarPDFUnificado() {
     const blob = await resp.blob();
     const nomeSugerido = `Oficio_e_Evidencias_PRASS_${ITEM_ATUAL.codigo.replace(/\./g, '_')}_${DEMANDA_ATUAL_NOME.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
 
-    // Usa a API moderna showSaveFilePicker (quando disponível no Chrome/Edge) para abrir a janela "Salvar Como"
     if (window.showSaveFilePicker) {
         try {
             const handle = await window.showSaveFilePicker({
@@ -2114,7 +2110,6 @@ async function aprovarEBaixarPDFUnificado() {
         }
     }
 
-    // Fallback padrão de download do navegador
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2139,5 +2134,5 @@ def index():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=True)
