@@ -31,19 +31,22 @@ app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploa
 # ==============================================================================
 def obter_url_postgres():
     """Localiza automaticamente a URL do PostgreSQL no Railway em qualquer variável disponível."""
+    # 1. Tenta encontrar uma URL completa já definida
     for nome_var in ("DATABASE_PUBLIC_URL", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
         val = os.environ.get(nome_var, "").strip()
+        # Ignora se o Railway não resolveu a variável (ainda contém '${{')
         if val and not val.startswith("${{"):
             if val.startswith("postgres://"):
                 val = val.replace("postgres://", "postgresql://", 1)
             return val
 
-    # Caso o Railway tenha injetado PGHOST, PGUSER, PGPASSWORD, PGDATABASE, PGPORT separados
+    # 2. Constrói a URL a partir das variáveis individuais (método mais seguro no Railway)
     pghost = os.environ.get("PGHOST", "").strip()
     pguser = os.environ.get("PGUSER", "").strip()
     pgpass = os.environ.get("PGPASSWORD", "").strip()
     pgdb = os.environ.get("PGDATABASE", "").strip()
     pgport = os.environ.get("PGPORT", "5432").strip()
+    
     if pghost and pguser and pgdb:
         return f"postgresql://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}"
 
@@ -75,6 +78,7 @@ def get_db_conn():
 
 
 def db_query(sql, params=(), fetch=True, commit=False):
+    """Executa queries no banco de forma agnóstica (PostgreSQL ou SQLite)"""
     conn = get_db_conn()
     try:
         if USE_POSTGRES:
@@ -2125,14 +2129,3 @@ window.addEventListener('DOMContentLoaded', carregarSistema);
 </script>
 </body>
 </html>
-"""
-
-
-@app.route("/")
-def index():
-    return render_template_string(HTML_TEMPLATE)
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port, debug=True)
