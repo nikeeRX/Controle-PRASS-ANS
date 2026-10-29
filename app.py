@@ -4,82 +4,527 @@ import io
 import time
 import json
 import sqlite3
+import traceback
 from datetime import datetime
 from flask import (
     Flask, request, jsonify, send_file, render_template_string
 )
-import pypdf
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, HRFlowable
-)
-from PIL import Image
 
-from seed_data import (
-    DEMANDAS_FIXAS_PADRAO, ITENS_PRASS_INICIAIS, CHECKLISTS_INICIAIS_COMPLEMENTO
-)
+# ==============================================================================
+# IMPORTS BLINDADOS (NUNCA DERRUBAM O BOOT DO WORKER NO GUNICORN)
+# ==============================================================================
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_PSYCOPG2 = True
+except Exception as e:
+    HAS_PSYCOPG2 = False
+    print(f"[AVISO BOOT] psycopg2 indisponivel: {e}")
+
+try:
+    import pypdf
+    HAS_PYPDF = True
+except Exception as e:
+    HAS_PYPDF = False
+    print(f"[AVISO BOOT] pypdf indisponivel: {e}")
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    )
+    HAS_REPORTLAB = True
+except Exception as e:
+    HAS_REPORTLAB = False
+    print(f"[AVISO BOOT] reportlab indisponivel: {e}")
+
+try:
+    from PIL import Image
+    HAS_PIL = True
+except Exception as e:
+    HAS_PIL = False
+    print(f"[AVISO BOOT] PIL indisponivel: {e}")
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploads
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64MB
+
+# ==============================================================================
+# DADOS FIXOS EMBUTIDOS DA PLANILHA MODELO (ZERO DEPENDÊNCIA DE ARQUIVO EXTERNO)
+# ==============================================================================
+DEMANDAS_FIXAS_PADRAO = [
+    "Status 08/2026",
+    "Status 09/2026",
+    "Status 10/2026",
+    "Complemento ANS 26/10",
+    "Status 11/2026",
+    "Status 12/2026",
+    "Status 01/2027",
+    "Status 02/2027",
+    "Status 03/2027",
+    "Status 04/2027",
+    "Status 05/2027",
+    "Status 06/2027",
+    "Status 07/2027",
+    "Status 08/2027",
+]
+
+ITENS_PRASS_INICIAIS = [
+    {
+        "codigo": "8.1.2",
+        "titulo": "8.1.2 Falhas no processo de fornecimento de reembolsos",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A Nota Técnica nº 39/2026 identificou, no âmbito da Anormalidade A, falhas relacionadas ao processo de "
+            "fornecimento de reembolsos, abrangendo situações de demora na comunicação para solução de pendências "
+            "documentais, extrapolação de prazos, pagamentos de valores incorretos e negativas indevidas, inclusive em "
+            "situações relacionadas à insuficiência de rede prestadora.\n"
+            "A análise da Agência também posicionou a Postal Saúde na 19ª colocação no indicador de Falhas de Reembolso, "
+            "registrando aumento das demandas relacionadas ao tema no período analisado.\n\n"
+            "Diagnóstico institucional\n"
+            "A Postal Saúde dispõe de fluxo formal para o processamento das solicitações de reembolso, contemplando "
+            "recebimento, conferência documental, análise, enquadramento, processamento e pagamento. O POP009 – Prover "
+            "Reembolso Assistencial – Versão 4 estabelece as etapas do processo, os documentos necessários e os "
+            "procedimentos aplicáveis às solicitações de reembolso.\n"
+            "O procedimento estabelece prazo de até 30 dias corridos para o processamento do reembolso, contado do "
+            "recebimento da documentação completa, além de prever tratamento específico para situações de documentação "
+            "incompleta ou inconsistente.\n"
+            "No acompanhamento operacional realizado pela área responsável, foram identificados protocolos pendentes, "
+            "inclusive solicitações que ultrapassavam o prazo de referência. A situação foi formalmente monitorada e "
+            "compartilhada com os gestores responsáveis e com a área financeira para adoção das providências pertinentes.\n"
+            "A análise institucional também identificou situações em que determinados prestadores de serviços assistenciais "
+            "solicitam indevidamente ao beneficiário o pagamento direto por serviços que deveriam observar o fluxo regular "
+            "de cobertura e faturamento da Operadora.\n"
+            "Em resposta a esse cenário, a Postal Saúde instaurou internamente Comitê de Procedimento Ético, além de "
+            "campanha educativa e Código de Conduta Ética para Prestadores Assistenciais."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• A Postal Saúde vem realizando o saneamento das pendências identificadas no processo de reembolso, sob "
+            "condução da área responsável, com acompanhamento dos protocolos e atuação direcionada sobre os casos que "
+            "ultrapassaram o prazo estabelecido.\n"
+            "• O processo encontra-se em fase de aperfeiçoamento integrado com a área Financeira, mediante revisão dos "
+            "fluxos e das interfaces relacionadas ao processamento e pagamento dos reembolsos.\n"
+            "• Em conjunto com a área de Tecnologia da Informação, estão sendo desenvolvidas medidas de automação "
+            "destinadas a reduzir intervenções manuais, ampliar a rastreabilidade das etapas e fortalecer os controles do processo.\n"
+            "• No âmbito da rede prestadora, encontram-se em implementação as iniciativas relacionadas ao Comitê de "
+            "Procedimento Ético, campanha educativa e Código de Conduta Ética.\n"
+            "• As pendências atualmente identificadas estão sendo tratadas pela área responsável, com previsão de "
+            "saneamento até outubro de 2026."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "O tratamento da matéria será acompanhado por indicadores capazes de demonstrar a redução do passivo e a "
+            "evolução do processo, contemplando:\n"
+            "• estoque de solicitações pendentes;\n"
+            "• quantidade e percentual de processos fora do prazo;\n"
+            "• percentual de solicitações processadas dentro do prazo;\n"
+            "• tempo médio de processamento;\n"
+            "• pendências documentais;\n"
+            "• negativas e respectivas reanálises;\n"
+            "• divergências de valores;\n"
+            "• tempo entre processamento e pagamento;\n"
+            "• NIPs relacionadas a reembolso;\n"
+            "• ocorrências relacionadas à conduta de prestadores;\n"
+            "• evolução do indicador de Falhas de Reembolso."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED/CODER: Responsável pelo monitoramento dos processos de Garantia de Atendimento e Reembolso (execução GEREL - UAR/NAR). Recursos Tecnológicos: Solicitação no APP para informar protocolo de atendimento no Reembolso Integral.",
+            "Status 09/2026": "GERED/CODER: Monitoramento de GA e Reembolso mantido. Solicitação tecnológica de vínculo obrigatório de protocolo no APP em andamento.",
+            "Status 10/2026": "GERED/CODER: Implementado em 01/10/2026 a obrigatoriedade de o beneficiário informar o número do protocolo de atendimento quando solicitar Reembolso Integral no aplicativo.",
+            "Complemento ANS 26/10": "N/A"
+        }
+    },
+    {
+        "codigo": "8.3.3",
+        "titulo": "8.3.3 Demora na liberação de procedimentos e consultas em conjunto em função de insuficiência de rede prestadora",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A Nota Técnica nº 39/2026 aponta como anormalidade administrativa grave a demora na liberação de procedimentos "
+            "e consultas em conjunto em decorrência de insuficiência de rede prestadora.\n\n"
+            "Diagnóstico institucional\n"
+            "A Postal Saúde possui processo formal de Garantia de Atendimento destinado justamente ao tratamento de "
+            "situações de inexistência ou indisponibilidade de rede assistencial.\n"
+            "O Manual determina que sejam esgotadas, de forma ordenada, as alternativas assistenciais:\n"
+            "1. rede credenciada;\n"
+            "2. contratação direta;\n"
+            "3. Tratamento Fora do Domicílio;\n"
+            "4. reembolso integral.\n"
+            "Também determina que as negociações de contratação direta sejam formalizadas e anexadas ao sistema para fins de evidência."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• A Postal Saúde mantém processo estruturado para gestão da Garantia de Atendimento, com atribuição formal da "
+            "área responsável pela gestão estratégica da rede para assegurar sua composição assistencial, identificar "
+            "vulnerabilidades e estabelecer os processos de Contratação Direta, TFD e Reembolso Assistencial.\n"
+            "• O Manual estabelece que a busca por atendimento considere rede direta, rede indireta, parcerias e "
+            "Telemedicina, seguida, quando necessário, de contratação direta, TFD e reembolso integral.\n"
+            "• A contratação direta exige formalização da negociação e manutenção das evidências no sistema."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "A operacionalização da Garantia de Atendimento prevê:\n"
+            "• acolhimento da solicitação;\n"
+            "• análise da cobertura;\n"
+            "• verificação da rede credenciada;\n"
+            "• comprovação sistêmica das tentativas de agendamento;\n"
+            "• definição da alternativa assistencial;\n"
+            "• autorização de reembolso integral, quando aplicável; e\n"
+            "• comunicação ao beneficiário.\n\n"
+            "Eventual demora decorrente de insuficiência de rede será analisada sob duas perspectivas: causa assistencial "
+            "(indisponibilidade ou inexistência efetiva do prestador) e resposta operacional (tempo e adequação das providências)."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED: Normativos vigentes da Garantia de Atendimento: MAN 037 (v3 - 11/08/2026), POP 009 (v4 - 13/08/2026), POP 012 (v1 - 13/08/2026), POP 013 (v0 - 13/08/2026), IOT 222 e IOT 224.",
+            "Status 09/2026": "GERED: IOT 222 e IOT 224 em revisão. Solicitação de subsídios às UAR/NAR e revisão do painel de vulnerabilidade.",
+            "Status 10/2026": "GERED/CODER: Reestruturação metodológica do painel de análise de vulnerabilidade.",
+            "Complemento ANS 26/10": "GERED/CODER - Subitem Vulnerabilidade de Rede: Reestruturação do modelo de análise de vulnerabilidade para fortalecer a rastreabilidade das bases."
+        }
+    },
+    {
+        "codigo": "8.4.1",
+        "titulo": "8.4.1 Insuficiência/inexistência de rede prestadora para a realização de consultas e procedimentos de cobertura obrigatória, acarretando desassistência ou pagamento particular para posterior reembolso",
+        "areas_atribuidas": ["CODER", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A Nota Técnica nº 39 aponta, como anormalidade administrativa grave de natureza assistencial, a insuficiência "
+            "ou inexistência de rede prestadora para realização de consultas e procedimentos de cobertura obrigatória, "
+            "quando essa condição acarreta desassistência ou obriga o beneficiário a realizar pagamento particular para "
+            "posterior reembolso.\n\n"
+            "Diagnóstico institucional\n"
+            "A Operadora dispõe de processo formal de Garantia de Atendimento, que contempla acolhimento da demanda, "
+            "análise de cobertura, verificação da rede disponível, comprovação das tentativas de agendamento, definição da "
+            "alternativa assistencial e comunicação ao beneficiário."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Implementação do Compartilhamento de Gestão de Riscos e Rede Assistencial, concebido para ampliar a "
+            "disponibilidade e a capilaridade da rede.\n"
+            "• Manutenção dos mecanismos previstos no processo de Garantia de Atendimento para situações de inexistência "
+            "ou indisponibilidade de prestadores.\n"
+            "• Condução integrada das medidas de saneamento e aperfeiçoamento do reembolso conforme item 8.1.2."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "O tratamento do risco ocorre em duas dimensões complementares:\n"
+            "I – Gestão da rede: identificação de insuficiências e vulnerabilidades, recomposição e ampliação da rede;\n"
+            "II – Garantia individual de acesso: adoção das alternativas assistenciais previstas quando identificada "
+            "inexistência ou indisponibilidade de prestador."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED: 1) Garantia de atendimento e reembolso conduzidos conforme item 8.1.2; 2) Gestão da Rede Assistencial (Direta/Indireta) sob gestão da CONEC.",
+            "Status 09/2026": "GERED: Ratificação do monitoramento integrado com o item 8.1.2 e revisão dos processos pela CONEC.",
+            "Status 10/2026": "GERED/CODER: Implementada em 01/10/2026 a obrigatoriedade do número de protocolo de atendimento na solicitação de Reembolso Integral no APP.",
+            "Complemento ANS 26/10": "N/A"
+        }
+    },
+    {
+        "codigo": "8.4.2",
+        "titulo": "8.4.2 Relatos de suspensão de atendimentos, inclusive de prestadores hospitalares, em função de inadimplência por parte da Operadora",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A Nota Técnica nº 39 aponta relatos de suspensão de atendimento, inclusive por prestadores hospitalares, em "
+            "decorrência de inadimplência da Operadora.\n\n"
+            "Diagnóstico institucional\n"
+            "A Postal Saúde reconhece que o período analisado foi marcado por relevante restrição financeira decorrente da "
+            "irregularidade dos repasses da mantenedora, circunstância que produziu impactos sobre a capacidade de "
+            "cumprimento tempestivo de obrigações financeiras perante parte da rede prestadora."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Implementação do Compartilhamento de Gestão de Riscos e Rede Assistencial, utilizando redes disponibilizadas "
+            "por operadoras parceiras para ampliar a disponibilidade de prestadores e reduzir vulnerabilidades assistenciais.\n"
+            "• Monitoramento e negociação direta com prestadores suspensos e direcionamento assistencial via Garantia de Atendimento."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "O risco passou a ser tratado de forma integrada entre as dimensões financeira, assistencial, regulatória e de "
+            "gestão da rede.\n"
+            "O monitoramento contempla a suficiência da rede, a continuidade da assistência, os indicadores assistenciais, "
+            "reclamações, NIPs e demais sinais de risco relacionados à disponibilidade de prestadores."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED: Esclarecimentos sobre registros de suspensão, descredenciamento e atuação conjunta com GEREM, GEREL e GECOF.",
+            "Status 09/2026": "GERED: Acompanhamento das suspensões e direcionamento assistencial junto às UAR/NAR.",
+            "Status 10/2026": "GERED/CODER: Revisão do painel de vulnerabilidade e monitoramento das demandas de Garantia de Atendimento.",
+            "Complemento ANS 26/10": "GERED/CODER - Subitem Garantia de Atendimento em virtude das suspensões: Direcionamento do fluxo assistencial para prestadores aptos da rede direta/indireta, Contratação Direta e Reembolso Integral."
+        }
+    },
+    {
+        "codigo": "8.5",
+        "titulo": "8.5. NÃO DISPONIBILIZAÇÃO DE FORMA CLARA DA REDE AOS BENEFICIÁRIOS NOS TERMOS DA REGULAMENTAÇÃO EM VIGOR",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A ANS apontou situação relacionada à não disponibilização, de forma clara, da rede assistencial aos "
+            "beneficiários, nos termos da regulamentação vigente, abrangendo aspectos relacionados à atualização das "
+            "informações da rede, à sua divulgação no portal corporativo e à comunicação das substituições de prestadores.\n\n"
+            "Diagnóstico institucional\n"
+            "A Postal Saúde possui estrutura formal de governança e gestão da rede assistencial, sob responsabilidade da "
+            "GERED. Entre janeiro de 2025 e julho de 2026, foram incorporados 305 novos prestadores, alcançando 13.086 "
+            "prestadores na rede direta, além de 27.100 pela rede indireta (CNU), totalizando 40.186 prestadores, e "
+            "registrados 580 descredenciamentos."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Manutenção de estrutura centralizada de gestão da rede assistencial pela GERED.\n"
+            "• Utilização do Painel de Vulnerabilidade da Rede Prestadora.\n"
+            "• Monitoramento contínuo dos credenciamentos, descredenciamentos, reativações e suspensões.\n"
+            "• Aplicação de normativos e procedimentos internos específicos (IOTs 031, 035, 036, 068, 075).\n"
+            "• Fortalecimento dos controles sistêmicos e automatizados."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "O apontamento está sendo tratado no âmbito do processo permanente de governança, monitoramento e melhoria "
+            "contínua da rede assistencial, assegurando maior consistência entre a situação efetiva da rede, as bases "
+            "corporativas e as informações disponibilizadas aos beneficiários."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED: Ações divididas entre CODER (Painel de Vulnerabilidade), CONEC (Aplicação e revisão de normativos) e COCAP (Qualificação cadastral e portal).",
+            "Status 09/2026": "GERED (CODER e CONEC): Revisão contínua dos processos operacionais e normativos da rede.",
+            "Status 10/2026": "GERED/CODER: Reestruturação do modelo do painel de análise de vulnerabilidade.",
+            "Complemento ANS 26/10": "GERED/CODER - Subitem Vulnerabilidade de Rede: Cronograma e aprimoramento metodológico do painel."
+        }
+    },
+    {
+        "codigo": "8.5.1",
+        "titulo": "8.5.1. RELATOS DE DESATUALIZAÇÃO DA REDE EFETIVAMENTE DISPONIBILIZADA PELA OPERADORA",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "Foram identificados relatos relacionados à desatualização da rede efetivamente disponibilizada pela Operadora, "
+            "situação que pode comprometer a adequada orientação dos beneficiários quanto aos prestadores disponíveis.\n\n"
+            "Diagnóstico institucional\n"
+            "No período de janeiro de 2025 a julho de 2026, foram registrados 305 novos credenciamentos e 580 "
+            "descredenciamentos, evidenciando a intensidade da movimentação da rede e a necessidade de mecanismos "
+            "permanentes de higienização e atualização cadastral."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Monitoramento sistemático das movimentações da rede.\n"
+            "• Utilização do Painel de Vulnerabilidade da Rede Prestadora.\n"
+            "• Aplicação da IOT 068 (higienização da rede credenciada), IOT 031 (descredenciamento), IOT 075 (suspensão de "
+            "atendimento), IOT 158 e IOT 224.\n"
+            "• Aprimoramento dos controles sistêmicos e automatizados voltados à rastreabilidade das movimentações."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "As movimentações da rede são acompanhadas pela GERED e submetidas aos fluxos institucionais correspondentes, "
+            "com foco na redução de divergências entre a situação operacional da rede e as informações disponibilizadas aos beneficiários."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED/CODER: Painel de vulnerabilidade em revisão. COCAP: Análises diárias focadas na qualificação contínua do cadastro e construção de painel de controle.",
+            "Status 09/2026": "GERED/CODER e COCAP: Continuidade da qualificação cadastral e desenvolvimento do painel de controle.",
+            "Status 10/2026": "GERED/CODER e COCAP: Extração das bases conciliadas, chamado GLPI 31043 (alterações cadastrais), relatório Benner 988 (IOT 068) e revisão das IOTs.",
+            "Complemento ANS 26/10": "Entrega das evidências do Bloco B5 (8.5.1): bases CSV, chamado GLPI 31043, rotina GERED, relatório Benner 988 e IOTs 031, 068 e 075."
+        }
+    },
+    {
+        "codigo": "8.5.2",
+        "titulo": "8.5.2. DIVULGAÇÃO DA REDE ASSISTENCIAL NO PORTAL CORPORATIVO DA OPERADORA, NÃO INTEGRALMENTE NOS TERMOS DA RN ANS Nº 486/2022",
+        "areas_atribuidas": ["CODER", "COCAP"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A ANS apontou possível não disponibilização integral das informações da rede assistencial no portal "
+            "corporativo da Operadora, nos termos estabelecidos pela RN ANS nº 486/2022, art. 2º.\n\n"
+            "Diagnóstico institucional\n"
+            "Considerando a elevada dinâmica de movimentação da rede, o principal ponto de atenção consiste em assegurar "
+            "que as informações constantes das bases operacionais estejam refletidas, de forma tempestiva e consistente, "
+            "nos mecanismos de disponibilização ao beneficiário."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Gestão centralizada das movimentações da rede pela GERED.\n"
+            "• Aprimoramento dos controles sistêmicos e automatizados (chamados GLPI nº 30182 e nº 30999).\n"
+            "• Fortalecimento da rastreabilidade das alterações cadastrais e contratuais no Guia de Saúde."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "A consistência das informações da rede é tratada como componente da governança assistencial, permanecendo "
+            "submetida a ciclo contínuo de monitoramento e aperfeiçoamento para redução de divergências entre as bases "
+            "internas e o portal."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED/CODER e GERED/COCAP: Desenvolvimento de painel de controle e acompanhamento dos requisitos do portal.",
+            "Status 09/2026": "GERED/CODER e GERED/COCAP: Evolução do módulo de gerenciamento de inconsistências do portal.",
+            "Status 10/2026": "GERED/COCAP: 1ª Entrega do Gerenciamento de Reportes do Guia Saúde em homologação (GLPI 30182) e abertura do GLPI 30999 para adequação integral à RN 486/2022.",
+            "Complemento ANS 26/10": "Entrega das evidências do Bloco B5 (8.5.2) e Bloco C1 (RN 486/2022, art. 2º): GLPI 30182, GLPI 30999, prints datados com URL e Checklist de Auditoria do art. 2º."
+        }
+    },
+    {
+        "codigo": "8.5.3",
+        "titulo": "8.5.3. NÃO DISPONIBILIZAÇÃO DE INFORMAÇÃO SOBRE A SUBSTITUIÇÃO DE PRESTADORES DE SERVIÇOS DE ATENÇÃO À SAÚDE NÃO HOSPITALARES, CONFORME DETERMINA A RN ANS Nº 567/2022",
+        "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A ANS apontou possível não disponibilização de informações relativas à substituição de prestadores de serviços "
+            "de atenção à saúde não hospitalares, nos termos da RN ANS nº 567/2022, art. 11.\n\n"
+            "Diagnóstico institucional\n"
+            "A Postal Saúde possui processo formal de gestão das movimentações da rede, contemplando credenciamento, "
+            "descredenciamento, recontratualização, substituição, suspensão e reorganização."
+        ),
+        "medidas_implementadas": (
+            "Medidas implementadas e em implementação\n\n"
+            "• Aplicação das IOTs 031, 035, 036 e 068.\n"
+            "• Avaliação da necessidade de substituição ou expansão da rede (CTI DIOPE/GERED 0020/2025).\n"
+            "• Fortalecimento dos mecanismos de rastreabilidade das movimentações e adequação do portal (GLPI nº 30992 e GLPI nº 31012)."
+        ),
+        "observacoes": (
+            "Tratamento e monitoramento\n\n"
+            "Os processos de descredenciamento e substituição são acompanhados pela GERED e avaliados quanto aos seus "
+            "potenciais impactos sobre a continuidade da assistência e adequada disponibilização das informações aos beneficiários."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED/CODER e COCAP: Monitoramento das substituições no portal e desenvolvimento de controles sistêmicos.",
+            "Status 09/2026": "GERED/CODER e COCAP: Levantamento de descredenciamentos e substituições vinculadas no Benner.",
+            "Status 10/2026": "GERED/COCAP: Abertura dos chamados GLPI 30992 (relatório consolidado de substitutos no Benner) e GLPI 31012 (pesquisa isolada RN 567/2022 art. 11 no portal).",
+            "Complemento ANS 26/10": "Entrega das evidências dos Blocos B6 e C2: GLPI 30992, IOTs 031 e 036, prints Benner x Portal, CTI 0020/2025, GLPI 31012, prints de 3 substituições e Checklist do art. 11."
+        }
+    },
+    {
+        "codigo": "8.6.1",
+        "titulo": "8.6.1. Insuficiência de rede prestadora que garanta o cumprimento dos prazos máximos de atendimento, conforme a RN ANS nº 566/2022",
+        "areas_atribuidas": ["CODER", "CONEC"],
+        "apontamento_ans": (
+            "Apontamento da ANS\n"
+            "A ANS apontou a existência de indícios de insuficiência de rede prestadora para garantir o cumprimento dos "
+            "prazos máximos de atendimento estabelecidos pela RN ANS nº 566/2022.\n\n"
+            "Diagnóstico Institucional\n"
+            "A Postal Saúde passou a fortalecer o acompanhamento da vulnerabilidade da rede e a integração entre os "
+            "mecanismos de monitoramento da Garantia de Atendimento e a gestão da rede credenciada."
+        ),
+        "medidas_implementadas": (
+            "Medidas Implementadas e em Implementação\n\n"
+            "• Monitoramento diário da Garantia de Atendimento, mediante painel gerencial em BI.\n"
+            "• Monitoramento da vulnerabilidade da rede credenciada.\n"
+            "• Utilização de Contratação Direta, Reembolso Integral e Tratamento Fora do Domicílio.\n"
+            "• Padronização dos fluxos operacionais por meio do Manual da Garantia de Atendimento e migração para o E-doc."
+        ),
+        "observacoes": (
+            "Tratamento e Monitoramento\n\n"
+            "O tratamento do risco de insuficiência de rede passou a ser conduzido sob perspectiva preventiva e contínua, "
+            "mediante integração entre monitoramento da demanda, análise da capacidade assistencial da rede e atuação regional."
+        ),
+        "historico_planilha": {
+            "Status 08/2026": "GERED/CODER: Monitoramento diário das UAR/NAR com maior incidência em processos de GA fora do prazo, alinhado ao item 8.1.2.",
+            "Status 09/2026": "GERED/CODER: Continuidade do acompanhamento diário via BI e alinhamento com as Regionais.",
+            "Status 10/2026": "GERED/CODER: Implementada em 01/10/2026 a obrigatoriedade do protocolo de atendimento no aplicativo para Reembolso Integral oriundo de Garantia de Atendimento.",
+            "Complemento ANS 26/10": "N/A"
+        }
+    }
+]
+
+CHECKLISTS_INICIAIS_COMPLEMENTO = {
+    "8.4.2": {
+        "CODER": [
+            "Demandas de Garantia de Atendimento geradas por suspensões de atendimento e sua solução",
+            "Controle mensal de prestadores suspensos e restabelecidos (indicadores do PRASS)"
+        ],
+        "CONEC": [
+            "Relação dos prestadores que suspenderam ou ameaçaram suspender por inadimplência: prestador, UF, data, valor em aberto e situação",
+            "Registros de negociação: e-mails, ofícios, notificações recebidas e atas de reunião com prestadores",
+            "Termos de acordo, parcelamento ou confissão de dívida e comprovantes de pagamento",
+            "Comunicação de restabelecimento do atendimento, com data"
+        ]
+    },
+    "8.5.1": {
+        "COCAP": [
+            "Extração da base de rede com data de corte, por tipo, UF e especialidade, conciliada com o portal",
+            "Relatório de alterações cadastrais do mês: inclusões, alterações e exclusões, com data e responsável",
+            "Registros da rotina da GERED: checklist e amostra de validações",
+            "Relatório de higienização da rede (IOT 068) do período",
+            "IOT 031, 068, 075, 158 e 224 revisadas ou cronograma formal de revisão"
+        ],
+        "CODER": [
+            "Revisão metodológica e reestruturação do Painel de Vulnerabilidade da Rede Prestadora"
+        ]
+    },
+    "8.5.2": {
+        "COCAP": [
+            "Relatório das notificações 'Encontrou inconsistência?' do portal e prazo de correção (GLPI 30182)",
+            "Cronograma do novo painel de controle e prints da versão atual",
+            "Bloco C1 (RN 486/2022, art. 2º) - Cronograma de Implantação",
+            "Bloco C1 (RN 486/2022, art. 2º) - Demanda de TI aberta (GLPI 30999) e especificação aprovada",
+            "Bloco C1 (RN 486/2022, art. 2º) - Homologação e data de entrada em produção",
+            "Bloco C1 (RN 486/2022, art. 2º) - Prints datados com URL, antes e depois, em ao menos três tipos de prestador",
+            "Bloco C1 (RN 486/2022, art. 2º) - Checklist de conformidade do art. 2º assinado pela área"
+        ]
+    },
+    "8.5.3": {
+        "COCAP": [
+            "Bloco B6 - Relação do período: prestador, CNPJ, data, motivo, substituto e data de publicação no portal (GLPI 30992)",
+            "Bloco B6 - Amostra de processos completos (IOT 031 e 036): solicitação, parecer, aprovação e aditivo ou distrato",
+            "Bloco B6 - Prova da comunicação ao beneficiário: print datado e data de publicação (Benner x Guia de Saúde)",
+            "Bloco B6 - Indicador do PRASS: percentual de substituições comunicadas no prazo",
+            "Bloco B6 - Análise de equivalência do substituto (mesmo serviço e município)",
+            "Bloco B6 - Termos aditivos de habilitação e CTI DIOPE/GERED 0020/2025, prometidos no PRASS",
+            "Bloco C2 (RN 567/2022, art. 11) - Cronograma de Implantação",
+            "Bloco C2 (RN 567/2022, art. 11) - Demanda de TI, especificação e homologação (GLPI 31012)",
+            "Bloco C2 (RN 567/2022, art. 11) - Prints datados com URL, antes e depois, de ao menos três substituições",
+            "Bloco C2 (RN 567/2022, art. 11) - Saneamento dos cadastros com erro (datas e telefones) e relatório da correção",
+            "Bloco C2 (RN 567/2022, art. 11) - Checklist de conformidade do art. 11 assinado"
+        ]
+    }
+}
 
 
 # ==============================================================================
-# CAMADA DE BANCO DE DADOS (AUTO-DETECÇÃO POSTGRESQL RAILWAY + FALLBACK SQLITE)
+# CAMADA DE BANCO DE DADOS COM AUTO-FALLBACK INTELIGENTE (POSTGRES -> SQLITE)
 # ==============================================================================
 def obter_url_postgres():
-    """Localiza automaticamente a URL do PostgreSQL no Railway. Se for inválida, ignora."""
-    for nome_var in ("DATABASE_URL", "DATABASE_PUBLIC_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
+    """Busca a URL do PostgreSQL priorizando DATABASE_PUBLIC_URL para evitar falha IPv6 no railway.internal."""
+    for nome_var in ("DATABASE_PUBLIC_URL", "DATABASE_URL", "POSTGRES_PUBLIC_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
         val = os.environ.get(nome_var, "").strip()
-        # Aceita apenas se for um link de banco de dados válido (evita crash com links quebrados ou strings puras)
-        if val and (val.startswith("postgres://") or val.startswith("postgresql://")):
+        if val and not val.startswith("${{") and (val.startswith("postgres://") or val.startswith("postgresql://")):
             return val.replace("postgres://", "postgresql://", 1)
 
-    # Constrói a URL a partir das variáveis individuais (fallback do Railway)
     pghost = os.environ.get("PGHOST", "").strip()
     pguser = os.environ.get("PGUSER", "").strip()
     pgpass = os.environ.get("PGPASSWORD", "").strip()
     pgdb = os.environ.get("PGDATABASE", "").strip()
     pgport = os.environ.get("PGPORT", "5432").strip()
-    
-    if pghost and pguser and pgdb:
+    if pghost and pguser and pgdb and not pghost.startswith("${{"):
         return f"postgresql://{pguser}:{pgpass}@{pghost}:{pgport}/{pgdb}"
 
     return ""
 
 
 DATABASE_URL = obter_url_postgres()
-USE_POSTGRES = bool(DATABASE_URL)
+USE_POSTGRES = bool(DATABASE_URL and HAS_PSYCOPG2)
 DB_INITIALIZED = False
-
-if USE_POSTGRES:
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
+LAST_PG_ERROR = ""
+SQLITE_PATH = os.path.join(os.path.abspath(os.path.dirname(__file__)), "prass_local.db")
 
 
 def get_db_conn():
+    """Conecta ao PostgreSQL; se o container Postgres do Railway recusar conexão, usa fallback seguro sem derrubar o app."""
+    global USE_POSTGRES, LAST_PG_ERROR, DB_INITIALIZED
     if USE_POSTGRES:
-        ultimo_erro = None
-        # Tenta conectar 5 vezes caso o Postgres do Railway esteja reiniciando ou "dormindo"
-        for _ in range(5):
+        for tentativa in range(2):
             try:
-                return psycopg2.connect(DATABASE_URL, connect_timeout=10)
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=4)
+                return conn, True
             except Exception as e:
-                ultimo_erro = e
-                time.sleep(1.5)
-        raise ultimo_erro
-    conn = sqlite3.connect("prass_local.db")
+                LAST_PG_ERROR = str(e).strip()
+                time.sleep(0.5)
+        print(f"[FALLBACK DB] PostgreSQL indisponivel ({LAST_PG_ERROR}). Ativando SQLite persistente local.")
+        USE_POSTGRES = False
+        DB_INITIALIZED = False
+
+    conn = sqlite3.connect(SQLITE_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
-    return conn
+    return conn, False
 
 
 def db_query(sql, params=(), fetch=True, commit=False):
-    """Executa queries de forma segura (suporta tanto PostgreSQL quanto SQLite)."""
-    conn = get_db_conn()
+    conn, is_pg = get_db_conn()
     try:
-        if USE_POSTGRES:
+        if is_pg:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute(sql, params)
         else:
@@ -99,10 +544,11 @@ def db_query(sql, params=(), fetch=True, commit=False):
 
 
 def init_db():
-    conn = get_db_conn()
+    global DB_INITIALIZED
+    conn, is_pg = get_db_conn()
     try:
         cur = conn.cursor()
-        if USE_POSTGRES:
+        if is_pg:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS prass_items (
                     codigo VARCHAR(20) PRIMARY KEY,
@@ -188,7 +634,6 @@ def init_db():
     finally:
         conn.close()
 
-    # Popula os itens do PRASS e as demandas fixas
     existentes = db_query("SELECT codigo FROM prass_items")
     codigos_existentes = {r["codigo"] for r in existentes}
 
@@ -212,7 +657,6 @@ def init_db():
                 commit=True,
             )
 
-        # Garante as demandas fixas do histórico
         for idx_d, nome_dem in enumerate(DEMANDAS_FIXAS_PADRAO, start=1):
             ja_tem = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -226,7 +670,6 @@ def init_db():
                     commit=True
                 )
 
-        # Popula checklists iniciais de teste (Complemento ANS 26/10)
         if cod in CHECKLISTS_INICIAIS_COMPLEMENTO:
             dem_row = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -249,17 +692,18 @@ def init_db():
                                 commit=True
                             )
 
+    DB_INITIALIZED = True
+
 
 @app.before_request
 def garantir_banco_inicializado():
-    """Garante que as tabelas sejam criadas na primeira requisição sem quebrar o boot do Gunicorn."""
     global DB_INITIALIZED
     if not DB_INITIALIZED:
         try:
             init_db()
-            DB_INITIALIZED = True
         except Exception as e:
-            print(f"Aviso ao inicializar banco de dados: {e}")
+            print(f"[ERRO INIT_DB]: {e}")
+            traceback.print_exc()
 
 
 # ==============================================================================
@@ -268,7 +712,7 @@ def garantir_banco_inicializado():
 def extrair_resumo_arquivo(nome_arquivo, raw_bytes):
     ext = os.path.splitext(nome_arquivo.lower())[1]
     try:
-        if ext == ".pdf":
+        if ext == ".pdf" and HAS_PYPDF:
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
             num_pags = len(reader.pages)
             trechos = []
@@ -290,7 +734,7 @@ def extrair_resumo_arquivo(nome_arquivo, raw_bytes):
                 f"Planilha eletrônica Excel ({ext.upper()}) mantida como arquivo externo referenciado sob o nome "
                 f"'{nome_arquivo}' ({len(raw_bytes)/1024:.1f} KB)."
             )
-        elif ext in (".png", ".jpg", ".jpeg"):
+        elif ext in (".png", ".jpg", ".jpeg") and HAS_PIL:
             im = Image.open(io.BytesIO(raw_bytes))
             return f"Captura de tela / Evidência visual ({ext.upper()}, resolução {im.size[0]}x{im.size[1]}px)."
         else:
@@ -559,40 +1003,63 @@ def converter_imagem_para_pdf_bytes(img_bytes):
 
 
 # ==============================================================================
-# ROTAS DE API (BACKEND FULL PYTHON)
+# ROTAS DE API E DIAGNÓSTICO (BACKEND FULL PYTHON)
 # ==============================================================================
+@app.route("/api/diagnostico", methods=["GET"])
+def api_diagnostico():
+    """Rota para inspecionar o status exato do banco de dados no Railway."""
+    url_mascarada = ""
+    if DATABASE_URL:
+        partes = DATABASE_URL.split("@")
+        url_mascarada = ("***@" + partes[-1]) if len(partes) > 1 else "definida"
+    return jsonify({
+        "postgres_ativo": USE_POSTGRES,
+        "url_detectada": url_mascarada,
+        "ultimo_erro_postgres": LAST_PG_ERROR,
+        "sqlite_fallback_path": SQLITE_PATH
+    })
+
+
 @app.route("/api/bootstrap", methods=["GET"])
 def api_bootstrap():
-    itens = db_query("SELECT * FROM prass_items ORDER BY codigo")
-    demanda_selecionada_nome = request.args.get("demanda_nome", "Complemento ANS 26/10")
+    try:
+        itens = db_query("SELECT * FROM prass_items ORDER BY codigo")
+        demanda_selecionada_nome = request.args.get("demanda_nome", "Complemento ANS 26/10")
 
-    resultado_itens = []
-    for it in itens:
-        cod = it["codigo"]
-        demandas = db_query(
-            "SELECT * FROM demandas WHERE item_codigo = %s ORDER BY ordem ASC, id ASC",
-            (cod,)
-        )
-        dem_ativa = next((d for d in demandas if d["nome"] == demanda_selecionada_nome), None)
-        if not dem_ativa and demandas:
-            dem_ativa = demandas[0]
+        resultado_itens = []
+        for it in itens:
+            cod = it["codigo"]
+            demandas = db_query(
+                "SELECT * FROM demandas WHERE item_codigo = %s ORDER BY ordem ASC, id ASC",
+                (cod,)
+            )
+            dem_ativa = next((d for d in demandas if d["nome"] == demanda_selecionada_nome), None)
+            if not dem_ativa and demandas:
+                dem_ativa = demandas[0]
 
-        areas = json.loads(it["areas_atribuidas"] or '["CODER","COCAP","CONEC"]')
-        semaforo = calcular_semaforo_setores(dem_ativa["id"], areas) if dem_ativa else {}
+            areas = json.loads(it["areas_atribuidas"] or '["CODER","COCAP","CONEC"]')
+            semaforo = calcular_semaforo_setores(dem_ativa["id"], areas) if dem_ativa else {}
 
-        resultado_itens.append({
-            "codigo": cod,
-            "titulo": it["titulo"],
-            "apontamento_ans": it["apontamento_ans"],
-            "medidas_implementadas": it["medidas_implementadas"],
-            "observacoes": it["observacoes"],
-            "historico_planilha": json.loads(it["historico_json"] or "{}"),
-            "areas_atribuidas": areas,
-            "demandas": demandas,
-            "semaforo": semaforo
+            resultado_itens.append({
+                "codigo": cod,
+                "titulo": it["titulo"],
+                "apontamento_ans": it["apontamento_ans"],
+                "medidas_implementadas": it["medidas_implementadas"],
+                "observacoes": it["observacoes"],
+                "historico_planilha": json.loads(it["historico_json"] or "{}"),
+                "areas_atribuidas": areas,
+                "demandas": demandas,
+                "semaforo": semaforo
+            })
+
+        return jsonify({
+            "itens": resultado_itens,
+            "postgres_ativo": USE_POSTGRES,
+            "ultimo_erro_pg": LAST_PG_ERROR
         })
-
-    return jsonify({"itens": resultado_itens, "postgres_ativo": USE_POSTGRES})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"erro": str(e)}), 500
 
 
 @app.route("/api/item/<path:codigo>/areas", methods=["POST"])
@@ -719,7 +1186,7 @@ def api_upload_anexos(chk_id):
     if not arquivos:
         return jsonify({"erro": "Nenhum arquivo enviado."}), 400
 
-    conn = get_db_conn()
+    conn, is_pg = get_db_conn()
     try:
         cur = conn.cursor()
         for f in arquivos:
@@ -731,7 +1198,7 @@ def api_upload_anexos(chk_id):
             tamanho = len(raw_bytes)
             resumo = extrair_resumo_arquivo(nome_arq, raw_bytes)
 
-            if USE_POSTGRES:
+            if is_pg:
                 cur.execute(
                     """INSERT INTO anexos (checklist_id, nome_arquivo, mime_type, tamanho, resumo_extraido, conteudo)
                        VALUES (%s, %s, %s, %s, %s, %s)""",
@@ -940,7 +1407,7 @@ def api_exportar_pdf_unificado(demanda_id):
 
     nome_download = f"Dossie_Oficio_PRASS_{it_row['codigo'].replace('.', '_')}_{dem_row['nome'].replace('/', '-').replace(' ', '_')}.pdf"
     return send_file(
-        pdf_final,
+        io.BytesIO(pdf_final.getvalue()),
         mimetype="application/pdf",
         as_attachment=True,
         download_name=nome_download
@@ -1002,6 +1469,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         border-radius: 6px;
         font-size: 12px;
         font-weight: 600;
+        cursor: pointer;
     }
     .main-container {
         display: flex;
@@ -1492,7 +1960,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="brand-title">POSTAL SAÚDE | SISTEMA DE AUTOMAÇÃO PRASS — GERED</div>
         <div class="brand-sub">Módulos 8.1.2 a 8.6.1 • Coordenações CODER, COCAP e CONEC • Geração Automática de Ofício + Dossiê PDF Unificado</div>
     </div>
-    <div class="db-badge" id="dbBadge">Conectando ao Banco...</div>
+    <div class="db-badge" id="dbBadge" onclick="verDiagnosticoBanco()" title="Clique para ver detalhes da conexão com o banco">Conectando ao Banco...</div>
 </header>
 
 <div class="main-container">
@@ -1634,15 +2102,32 @@ let DRAWER_ABERTO = null;
 let CHECKLIST_ATUAL = [];
 let CHK_ID_PARA_UPLOAD = null;
 
+async function verDiagnosticoBanco() {
+    const r = await fetch('/api/diagnostico');
+    const d = await r.json();
+    alert(
+        "DIAGNÓSTICO DE BANCO DE DADOS:\n\n" +
+        "• PostgreSQL Ativo: " + (d.postgres_ativo ? "SIM" : "NÃO (Usando Banco Persistente Interno)") + "\n" +
+        "• URL Detectada: " + (d.url_detectada || "(Nenhuma)") + "\n" +
+        "• Aviso Postgres: " + (d.ultimo_erro_postgres || "Nenhum erro")
+    );
+}
+
 async function carregarSistema() {
     try {
         const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`);
-        if (!resp.ok) throw new Error('Falha ao buscar dados no servidor');
         const dados = await resp.json();
+        if (!resp.ok || dados.erro) {
+            throw new Error(dados.erro || 'Falha HTTP ' + resp.status);
+        }
         ESTADO_ITENS = dados.itens;
 
         const badge = document.getElementById('dbBadge');
-        badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Railway Ativo' : '🟡 Banco Interno SQLite Ativo';
+        if (dados.postgres_ativo) {
+            badge.textContent = '🟢 PostgreSQL Railway Ativo';
+        } else {
+            badge.textContent = '🟢 Banco Persistente Ativo (Clique p/ Info)';
+        }
 
         if (!ITEM_ATUAL && ESTADO_ITENS.length > 0) {
             ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === '8.5.1') || ESTADO_ITENS[0];
@@ -1654,7 +2139,7 @@ async function carregarSistema() {
         renderizarItemAtual();
     } catch (e) {
         console.error(e);
-        document.getElementById('dbBadge').textContent = '🔴 Erro na API (Verifique Logs)';
+        document.getElementById('dbBadge').textContent = '🔴 Erro: ' + e.message;
     }
 }
 
@@ -2130,3 +2615,14 @@ window.addEventListener('DOMContentLoaded', carregarSistema);
 </script>
 </body>
 </html>
+"""
+
+
+@app.route("/")
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port, debug=True)
