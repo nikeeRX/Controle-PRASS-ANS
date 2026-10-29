@@ -30,17 +30,14 @@ app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploa
 # CAMADA DE BANCO DE DADOS (AUTO-DETECÇÃO POSTGRESQL RAILWAY + FALLBACK SQLITE)
 # ==============================================================================
 def obter_url_postgres():
-    """Localiza automaticamente a URL do PostgreSQL no Railway em qualquer variável disponível."""
-    # 1. Tenta encontrar uma URL completa já definida
-    for nome_var in ("DATABASE_PUBLIC_URL", "DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
+    """Localiza automaticamente a URL do PostgreSQL no Railway. Se for inválida, ignora."""
+    for nome_var in ("DATABASE_URL", "DATABASE_PUBLIC_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
         val = os.environ.get(nome_var, "").strip()
-        # Ignora se o Railway não resolveu a variável (ainda contém '${{')
-        if val and not val.startswith("${{"):
-            if val.startswith("postgres://"):
-                val = val.replace("postgres://", "postgresql://", 1)
-            return val
+        # Aceita apenas se for um link de banco de dados válido (evita crash com links quebrados ou strings puras)
+        if val and (val.startswith("postgres://") or val.startswith("postgresql://")):
+            return val.replace("postgres://", "postgresql://", 1)
 
-    # 2. Constrói a URL a partir das variáveis individuais (método mais seguro no Railway)
+    # Constrói a URL a partir das variáveis individuais (fallback do Railway)
     pghost = os.environ.get("PGHOST", "").strip()
     pguser = os.environ.get("PGUSER", "").strip()
     pgpass = os.environ.get("PGPASSWORD", "").strip()
@@ -65,12 +62,13 @@ if USE_POSTGRES:
 def get_db_conn():
     if USE_POSTGRES:
         ultimo_erro = None
+        # Tenta conectar 5 vezes caso o Postgres do Railway esteja reiniciando ou "dormindo"
         for _ in range(5):
             try:
                 return psycopg2.connect(DATABASE_URL, connect_timeout=10)
             except Exception as e:
                 ultimo_erro = e
-                time.sleep(1.2)
+                time.sleep(1.5)
         raise ultimo_erro
     conn = sqlite3.connect("prass_local.db")
     conn.row_factory = sqlite3.Row
@@ -78,7 +76,7 @@ def get_db_conn():
 
 
 def db_query(sql, params=(), fetch=True, commit=False):
-    """Executa queries no banco de forma agnóstica (PostgreSQL ou SQLite)"""
+    """Executa queries de forma segura (suporta tanto PostgreSQL quanto SQLite)."""
     conn = get_db_conn()
     try:
         if USE_POSTGRES:
@@ -190,7 +188,7 @@ def init_db():
     finally:
         conn.close()
 
-    # Popula os itens do PRASS e as demandas fixas (08/2026 a 08/2027) se ainda não existirem
+    # Popula os itens do PRASS e as demandas fixas
     existentes = db_query("SELECT codigo FROM prass_items")
     codigos_existentes = {r["codigo"] for r in existentes}
 
@@ -214,6 +212,7 @@ def init_db():
                 commit=True,
             )
 
+        # Garante as demandas fixas do histórico
         for idx_d, nome_dem in enumerate(DEMANDAS_FIXAS_PADRAO, start=1):
             ja_tem = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -227,6 +226,7 @@ def init_db():
                     commit=True
                 )
 
+        # Popula checklists iniciais de teste (Complemento ANS 26/10)
         if cod in CHECKLISTS_INICIAIS_COMPLEMENTO:
             dem_row = db_query(
                 "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
@@ -252,13 +252,14 @@ def init_db():
 
 @app.before_request
 def garantir_banco_inicializado():
+    """Garante que as tabelas sejam criadas na primeira requisição sem quebrar o boot do Gunicorn."""
     global DB_INITIALIZED
     if not DB_INITIALIZED:
         try:
             init_db()
             DB_INITIALIZED = True
         except Exception as e:
-            print(f"Aviso ao inicializar banco: {e}")
+            print(f"Aviso ao inicializar banco de dados: {e}")
 
 
 # ==============================================================================
