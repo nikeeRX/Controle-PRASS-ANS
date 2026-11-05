@@ -389,7 +389,7 @@ ITENS_PRASS_INICIAIS = [
                 "No que se refere aos itens de controle de rede, seguem nossos esclarecimentos:\n"
                 "• Descredenciamento ou restrição de atendimento: Aplicação das IOTs 031, 036 e 068, avaliação de substituição/expansão da rede e fortalecimento da rastreabilidade por meio de painel gerencial;\n"
                 "• Estudos de suficiência e capilaridade da rede: Contemplados no painel de análise de vulnerabilidade em revisão;\n"
-                "• Mecanismos de monitoramento assistencial e regulatório: Conduzidos pelaGERED/CODER conforme item 8.1.2.\n"
+                "• Mecanismos de monitoramento assistencial e regulatório: Conduzidos pela GERED/CODER conforme item 8.1.2.\n"
                 "GEREM: Ampliada a rede assistencial por meio de convênios de reciprocidade/compartilhamento de risco (AMIL RJ, UNIMED CNU e UNIMED CENTRO OESTE PAULISTA)."
             ),
             "Status 09/2026": (
@@ -1002,6 +1002,7 @@ def init_db():
                 );
             """)
             cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS resumo_texto TEXT DEFAULT '';")
+            cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS oficio_texto TEXT DEFAULT '';")
         else:
             cur.executescript("""
                 CREATE TABLE IF NOT EXISTS prass_items (
@@ -1048,6 +1049,8 @@ def init_db():
             cols = [row[1] for row in cur.fetchall()]
             if "resumo_texto" not in cols:
                 cur.execute("ALTER TABLE demandas ADD COLUMN resumo_texto TEXT DEFAULT '';")
+            if "oficio_texto" not in cols:
+                cur.execute("ALTER TABLE demandas ADD COLUMN oficio_texto TEXT DEFAULT '';")
         conn.commit()
     finally:
         conn.close()
@@ -1076,7 +1079,6 @@ def init_db():
                 commit=True,
             )
         else:
-            # Atualiza o historico_json com os textos integrais da planilha
             db_query(
                 """UPDATE prass_items
                    SET apontamento_ans = %s, medidas_implementadas = %s, observacoes = %s, historico_json = %s
@@ -1337,6 +1339,33 @@ def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anex
     return "\n".join(linhas)
 
 
+def atualizar_bloco_resumo_no_oficio_salvo(texto_oficio_salvo, novo_resumo):
+    """
+    Caso o analista já tenha uma versão salva do Ofício e altere apenas a Caixinha de Resumo,
+    atualiza somente o texto da Seção 1 sem perder nenhuma edição manual feita na Seção 2!
+    """
+    novo_resumo = (novo_resumo or "").strip()
+    if not novo_resumo or not texto_oficio_salvo:
+        return texto_oficio_salvo
+
+    marcador_1 = "1. RESUMO EXECUTIVO E CONSIDERAÇÕES INICIAIS"
+    marcador_2 = "2. ANÁLISE TÉCNICA DAS EVIDÊNCIAS E DOCUMENTOS COMPROBATÓRIOS"
+
+    pos_1 = texto_oficio_salvo.find(marcador_1)
+    pos_2 = texto_oficio_salvo.find(marcador_2)
+
+    if pos_1 != -1 and pos_2 != -1 and pos_2 > pos_1:
+        inicio_bloco_1 = pos_1 + len(marcador_1)
+        return (
+            texto_oficio_salvo[:inicio_bloco_1]
+            + "\n"
+            + novo_resumo
+            + "\n\n"
+            + texto_oficio_salvo[pos_2:]
+        )
+    return texto_oficio_salvo
+
+
 def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivos_excel, lista_pdfs_anexados):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -1554,15 +1583,31 @@ def api_criar_demanda():
 
 @app.route("/api/demanda/<int:demanda_id>/resumo", methods=["POST"])
 def api_salvar_resumo_demanda(demanda_id):
-    """Salva o texto da caixinha de Resumo (antes das evidências) no banco."""
+    """
+    Salva o texto da caixinha de Resumo (antes das evidências) no banco.
+    Se já houver um oficio_texto salvo, sincroniza apenas a Seção 1 (Resumo) mantendo as edições da Seção 2!
+    """
     body = request.get_json(force=True)
     resumo_texto = body.get("resumo_texto", "").strip()
-    db_query(
-        "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
-        (resumo_texto, demanda_id),
-        fetch=False,
-        commit=True
-    )
+
+    dem = db_query("SELECT oficio_texto FROM demandas WHERE id = %s", (demanda_id,))
+    oficio_atual = (dem[0].get("oficio_texto") or "").strip() if dem else ""
+
+    if oficio_atual:
+        oficio_sincronizado = atualizar_bloco_resumo_no_oficio_salvo(oficio_atual, resumo_texto)
+        db_query(
+            "UPDATE demandas SET resumo_texto = %s, oficio_texto = %s WHERE id = %s",
+            (resumo_texto, oficio_sincronizado, demanda_id),
+            fetch=False,
+            commit=True
+        )
+    else:
+        db_query(
+            "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
+            (resumo_texto, demanda_id),
+            fetch=False,
+            commit=True
+        )
     return jsonify({"ok": True, "resumo_texto": resumo_texto})
 
 
@@ -1732,19 +1777,30 @@ def api_baixar_anexo(anexo_id):
 
 @app.route("/api/demanda/<int:demanda_id>/gerar-minuta-oficio", methods=["POST"])
 def api_gerar_minuta_oficio(demanda_id):
+    """
+    CORREÇÃO DEFINITIVA DE PERSISTÊNCIA DA ÚLTIMA VERSÃO:
+    - Se já existir um oficio_texto salvo no banco e 'regenerar' for False, retorna exatamente
+      a última versão editada pelo analista (atualizando apenas a Seção 1 se o Resumo tiver mudado).
+    - Só recria do zero se não existir versão salva ou se o analista clicar em 'Recriar Automático'.
+    """
     body = request.get_json(silent=True) or {}
-    if "resumo_texto" in body:
-        db_query(
-            "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
-            (body["resumo_texto"].strip(), demanda_id),
-            fetch=False,
-            commit=True
-        )
+    forcar_regeneracao = bool(body.get("regenerar", False))
 
     dem = db_query("SELECT * FROM demandas WHERE id = %s", (demanda_id,))
     if not dem:
         return jsonify({"erro": "Demanda não encontrada."}), 404
     dem_row = dem[0]
+
+    if "resumo_texto" in body:
+        novo_resumo = body["resumo_texto"].strip()
+        dem_row["resumo_texto"] = novo_resumo
+        db_query(
+            "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
+            (novo_resumo, demanda_id),
+            fetch=False,
+            commit=True
+        )
+
     it_row = db_query("SELECT * FROM prass_items WHERE codigo = %s", (dem_row["item_codigo"],))[0]
 
     chks = db_query(
@@ -1767,10 +1823,20 @@ def api_gerar_minuta_oficio(demanda_id):
             else:
                 arquivos_pdf.append({"setor": c["setor"], "nome_arquivo": a["nome_arquivo"], "titulo_chk": c["titulo"]})
 
-    forcar_regeneracao = bool(body.get("regenerar", False))
+    oficio_salvo = (dem_row.get("oficio_texto") or "").strip()
 
-    if dem_row.get("oficio_texto") and dem_row["oficio_texto"].strip() and not forcar_regeneracao:
-        texto_minuta = dem_row["oficio_texto"]
+    if oficio_salvo and not forcar_regeneracao:
+        # Mantém a última versão editada e salva pelo analista!
+        if "resumo_texto" in body and body["resumo_texto"].strip():
+            oficio_salvo = atualizar_bloco_resumo_no_oficio_salvo(oficio_salvo, body["resumo_texto"].strip())
+            db_query(
+                "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
+                (oficio_salvo, demanda_id),
+                fetch=False,
+                commit=True
+            )
+        texto_minuta = oficio_salvo
+        carregou_salvo = True
     else:
         texto_minuta = construir_texto_oficio_automatico(it_row, dem_row, chks)
         db_query(
@@ -1779,9 +1845,11 @@ def api_gerar_minuta_oficio(demanda_id):
             fetch=False,
             commit=True
         )
+        carregou_salvo = False
 
     return jsonify({
         "texto_oficio": texto_minuta,
+        "carregou_versao_salva": carregou_salvo,
         "arquivos_pdf": arquivos_pdf,
         "arquivos_excel": arquivos_excel,
         "item_codigo": it_row["codigo"],
@@ -1792,21 +1860,30 @@ def api_gerar_minuta_oficio(demanda_id):
 @app.route("/api/demanda/<int:demanda_id>/salvar-oficio", methods=["POST"])
 def api_salvar_oficio(demanda_id):
     body = request.get_json(force=True)
-    texto = body.get("texto_oficio", "")
+    texto = body.get("texto_oficio", "").strip()
     db_query(
         "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
         (texto, demanda_id),
         fetch=False,
         commit=True
     )
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "horario": datetime.now().strftime("%H:%M:%S")})
 
 
 @app.route("/api/demanda/<int:demanda_id>/exportar-word", methods=["POST"])
 def api_exportar_word(demanda_id):
-    """Permite baixar o Ofício aprovado também em formato Word (.doc) formatado."""
+    """Salva a edição mais recente no banco e exporta o Ofício em Word (.doc)."""
     body = request.get_json(force=True)
     texto_oficio = body.get("texto_oficio", "").strip()
+
+    # Persiste a versão editada antes de baixar o Word
+    db_query(
+        "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
+        (texto_oficio, demanda_id),
+        fetch=False,
+        commit=True
+    )
+
     dem_row = db_query("SELECT * FROM demandas WHERE id = %s", (demanda_id,))[0]
     it_row = db_query("SELECT * FROM prass_items WHERE codigo = %s", (dem_row["item_codigo"],))[0]
 
@@ -1853,6 +1930,7 @@ def api_exportar_pdf_unificado(demanda_id):
     dem_row = dem[0]
     it_row = db_query("SELECT * FROM prass_items WHERE codigo = %s", (dem_row["item_codigo"],))[0]
 
+    # Salva imediatamente no banco a versão aprovada/editada pelo analista
     db_query(
         "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
         (texto_oficio, demanda_id),
@@ -2649,25 +2727,30 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         <div class="modal-header">
             <div>
                 <div style="font-size:15px; font-weight:800;">📄 ANÁLISE AUTOMÁTICA DE EVIDÊNCIAS & MINUTA DO OFÍCIO</div>
-                <div style="font-size:11.5px; color:#FFD100;" id="modalSubtitulo">O Resumo foi posicionado no início (Seção 1), seguido da Análise Técnica de todas as evidências (Seção 2).</div>
+                <div style="font-size:11.5px; color:#FFD100;" id="modalSubtitulo">Carregando versão do Ofício...</div>
             </div>
             <button onclick="fecharModalOficio()" style="background:none; border:none; color:#FFF; font-size:20px; cursor:pointer;">✖</button>
         </div>
         <div class="modal-body">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:12.5px; font-weight:700; color:#334155;">Texto do Ofício (Editável pelo Analista):</span>
-                <button class="tool-btn" onclick="regenerarTextoOficio()">🔄 Atualizar Ofício com Resumo + Anexos Atuais</button>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                <div>
+                    <span style="font-size:12.5px; font-weight:700; color:#334155;">Texto do Ofício (Editável pelo Analista):</span>
+                    <span id="badgeStatusOficioModal" style="font-size:11.5px; font-weight:700; color:var(--verde); margin-left:8px;"></span>
+                </div>
+                <button class="tool-btn" onclick="regenerarTextoOficio()" title="Recria o texto automático puxando novos anexos do checklist">
+                    🔄 Recriar Ofício do Zero (Puxar Novos Anexos)
+                </button>
             </div>
-            <textarea class="oficio-textarea" id="textareaOficio"></textarea>
+            <textarea class="oficio-textarea" id="textareaOficio" onblur="salvarRascunhoOficio(true)"></textarea>
             <div id="resumoArquivosModal" style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; padding:10px 14px; font-size:12px;"></div>
         </div>
         <div class="modal-footer">
             <div style="display:flex; gap:8px;">
-                <button class="tool-btn" onclick="salvarRascunhoOficio()">💾 Salvar Edição no Banco</button>
+                <button class="tool-btn" onclick="salvarRascunhoOficio(false)">💾 Salvar Edição no Banco</button>
                 <button class="btn-primary" onclick="baixarOficioEmWord()">📝 Baixar Ofício em Word (.doc)</button>
             </div>
             <div style="display:flex; gap:10px;">
-                <button class="tool-btn" onclick="fecharModalOficio()">Cancelar</button>
+                <button class="tool-btn" onclick="fecharModalOficio()">Fechar (Salva Automático)</button>
                 <button class="btn-success" onclick="aprovarEBaixarPDFUnificado()">✅ Aprovar Ofício e Baixar PDF Unificado (Ofício + Anexos)</button>
             </div>
         </div>
@@ -2688,7 +2771,7 @@ let CHECKLIST_ATUAL = [];
 let CHK_ID_PARA_UPLOAD = null;
 
 async function verDiagnosticoBanco() {
-    const r = await fetch('/api/diagnostico');
+    const r = await fetch('/api/diagnostico', { cache: 'no-store' });
     const d = await r.json();
     alert(
         "DIAGNÓSTICO DE BANCO DE DADOS:\n\n" +
@@ -2700,7 +2783,7 @@ async function verDiagnosticoBanco() {
 
 async function carregarSistema() {
     try {
-        const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`);
+        const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`, { cache: 'no-store' });
         const dados = await resp.json();
         if (!resp.ok || dados.erro) {
             throw new Error(dados.erro || 'Falha HTTP ' + resp.status);
@@ -2913,7 +2996,7 @@ async function salvarResumoDemanda(mostrarAlerta) {
         lbl.textContent = '✔ Resumo salvo!';
         setTimeout(() => { lbl.textContent = ''; }, 3000);
         if (mostrarAlerta) {
-            alert('Resumo executivo salvo com sucesso! Ele sairá na Seção 1 do Ofício antes da análise das evidências.');
+            alert('Resumo executivo salvo com sucesso! Ele já foi sincronizado na Seção 1 do Ofício.');
         }
     }
 }
@@ -2935,7 +3018,7 @@ async function importarResumoPlanilhaBase() {
 
 async function carregarChecklistDemanda() {
     if (!DEMANDA_ATUAL_ID) return;
-    const resp = await fetch(`/api/checklist/${DEMANDA_ATUAL_ID}`);
+    const resp = await fetch(`/api/checklist/${DEMANDA_ATUAL_ID}`, { cache: 'no-store' });
     const dados = await resp.json();
     CHECKLIST_ATUAL = dados.checklist || [];
     ITEM_ATUAL.semaforo = dados.semaforo;
@@ -3128,6 +3211,9 @@ async function removerAnexo(anexoId) {
     await carregarSistema();
 }
 
+// ==============================================================================
+// MODAL DO OFÍCIO: SEMPRE ABRE A ÚLTIMA VERSÃO SALVA (regenerar: false)
+// ==============================================================================
 async function abrirModalOficio() {
     if (!DEMANDA_ATUAL_ID) {
         alert('Selecione uma demanda primeiro.');
@@ -3136,9 +3222,10 @@ async function abrirModalOficio() {
     const resumoAtual = document.getElementById('textareaResumoDemanda').value;
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/gerar-minuta-oficio`, {
         method: 'POST',
+        cache: 'no-store',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-            regenerar: true,
+            regenerar: false,
             resumo_texto: resumoAtual
         })
     });
@@ -3148,9 +3235,15 @@ async function abrirModalOficio() {
 }
 
 async function regenerarTextoOficio() {
+    const ok = confirm(
+        "Atenção: Recriar o Ofício do zero irá montar novamente o texto automático com base no Resumo e nos Anexos atuais, substituindo eventuais edições manuais feitas no texto abaixo.\n\nDeseja recriar mesmo assim?"
+    );
+    if (!ok) return;
+
     const resumoAtual = document.getElementById('textareaResumoDemanda').value;
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/gerar-minuta-oficio`, {
         method: 'POST',
+        cache: 'no-store',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             regenerar: true,
@@ -3163,6 +3256,17 @@ async function regenerarTextoOficio() {
 
 function preencherModalOficio(dados) {
     document.getElementById('textareaOficio').value = dados.texto_oficio || '';
+    const sub = document.getElementById('modalSubtitulo');
+    const badge = document.getElementById('badgeStatusOficioModal');
+
+    if (dados.carregou_versao_salva) {
+        sub.textContent = '✔ Última versão editada/salva carregada com sucesso do banco de dados.';
+        badge.textContent = '✔ Última versão salva ativa';
+    } else {
+        sub.textContent = 'Minuta gerada automaticamente (Resumo na Seção 1 + Análise das Evidências na Seção 2).';
+        badge.textContent = '✨ Nova minuta gerada e salva';
+    }
+
     const box = document.getElementById('resumoArquivosModal');
     const qtdPdf = (dados.arquivos_pdf || []).length;
     const qtdXls = (dados.arquivos_excel || []).length;
@@ -3179,22 +3283,40 @@ function preencherModalOficio(dados) {
     box.innerHTML = html;
 }
 
-function fecharModalOficio() {
+async function fecharModalOficio() {
+    // Salva automaticamente qualquer alteração feita antes de fechar a janela
+    if (DEMANDA_ATUAL_ID) {
+        const texto = document.getElementById('textareaOficio').value;
+        await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/salvar-oficio`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ texto_oficio: texto })
+        });
+    }
     document.getElementById('modalOficio').classList.remove('open');
 }
 
-async function salvarRascunhoOficio() {
+async function salvarRascunhoOficio(silencioso) {
+    if (!DEMANDA_ATUAL_ID) return;
     const texto = document.getElementById('textareaOficio').value;
-    await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/salvar-oficio`, {
+    const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/salvar-oficio`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ texto_oficio: texto })
     });
-    alert('Texto do Ofício salvo com sucesso no banco de dados!');
+    if (resp.ok) {
+        const d = await resp.json();
+        const badge = document.getElementById('badgeStatusOficioModal');
+        badge.textContent = `✔ Última versão salva no banco às ${d.horario || 'agora'}`;
+        if (!silencioso) {
+            alert('Última versão do Ofício salva com sucesso no banco de dados!');
+        }
+    }
 }
 
 async function baixarOficioEmWord() {
     const texto = document.getElementById('textareaOficio').value;
+    await salvarRascunhoOficio(true);
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/exportar-word`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -3217,6 +3339,7 @@ async function baixarOficioEmWord() {
 
 async function aprovarEBaixarPDFUnificado() {
     const texto = document.getElementById('textareaOficio').value;
+    await salvarRascunhoOficio(true);
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/exportar-pdf-unificado`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -3241,7 +3364,7 @@ async function aprovarEBaixarPDFUnificado() {
             const writable = await handle.createWritable();
             await writable.write(blob);
             await writable.close();
-            fecharModalOficio();
+            await fecharModalOficio();
             return;
         } catch (err) {
             if (err.name === 'AbortError') return;
@@ -3256,7 +3379,7 @@ async function aprovarEBaixarPDFUnificado() {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
-    fecharModalOficio();
+    await fecharModalOficio();
 }
 
 window.addEventListener('DOMContentLoaded', carregarSistema);
