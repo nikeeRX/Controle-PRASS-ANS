@@ -48,12 +48,21 @@ except Exception as e:
     HAS_PIL = False
     print(f"[AVISO BOOT] PIL indisponivel: {e}")
 
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    HAS_OPENPYXL = True
+except Exception as e:
+    HAS_OPENPYXL = False
+    print(f"[AVISO BOOT] openpyxl indisponivel: {e}")
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploads
 
 
 # ==============================================================================
-# DADOS FIXOS INTEGRAIS EXTRAÍDOS DA PLANILHA 'PRASS - Projeto - base inicial.xlsx'
+# DADOS FIXOS DA PLANILHA MODELO (PRASS - PROJETO - BASE INICIAL)
 # ==============================================================================
 DEMANDAS_FIXAS_PADRAO = [
     "Status 08/2026",
@@ -72,6 +81,20 @@ DEMANDAS_FIXAS_PADRAO = [
     "Status 08/2027",
 ]
 
+TXT_CODER_OUT_26 = (
+    "GERED/CODER\n"
+    "No que diz respeito às ações da GERED/CODER, registramos que o painel de análise de vulnerabilidade "
+    "encontra-se em processo de revisão, abrangendo a metodologia de extração, tratamento e análise dos dados "
+    "utilizados em sua construção. A iniciativa tem por objetivo aprimorar a qualidade das informações, "
+    "fortalecer a rastreabilidade das bases utilizadas e assegurar maior aderência às necessidades institucionais "
+    "e operacionais.\n"
+    "Em decorrência das avaliações realizadas, verificou-se a necessidade de reestruturação do modelo atualmente "
+    "adotado, com vistas à institucionalização da ferramenta e ao estabelecimento de critérios formais para sua "
+    "manutenção, atualização e governança.\n"
+    "Nesse contexto, foi formalizada, em 08/10/2026, demanda junto à área de Tecnologia da Informação para "
+    "desenvolvimento e institucionalização do painel de vulnerabilidade, conforme evidência constante do Anexo I."
+)
+
 ITENS_PRASS_INICIAIS = [
     {
         "codigo": "8.1.2",
@@ -82,109 +105,59 @@ ITENS_PRASS_INICIAIS = [
             "A Nota Técnica nº 39/2026 identificou, no âmbito da Anormalidade A, falhas relacionadas ao processo de "
             "fornecimento de reembolsos, abrangendo situações de demora na comunicação para solução de pendências "
             "documentais, extrapolação de prazos, pagamentos de valores incorretos e negativas indevidas, inclusive em "
-            "situações relacionadas à insuficiência de rede prestadora.\n"
-            "A análise da Agência também posicionou a Postal Saúde na 19ª colocação no indicador de Falhas de Reembolso, "
-            "registrando aumento das demandas relacionadas ao tema no período analisado.\n\n"
+            "situações relacionadas à insuficiência de rede prestadora. A análise da Agência também posicionou a Postal "
+            "Saúde na 19ª colocação no indicador de Falhas de Reembolso.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde dispõe de fluxo formal para o processamento das solicitações de reembolso, contemplando "
-            "recebimento, conferência documental, análise, enquadramento, processamento e pagamento. O POP009 – Prover "
-            "Reembolso Assistencial – Versão 4 estabelece as etapas do processo, os documentos necessários e os "
-            "procedimentos aplicáveis às solicitações de reembolso.\n"
-            "O procedimento estabelece prazo de até 30 dias corridos para o processamento do reembolso, contado do "
-            "recebimento da documentação completa, além de prever tratamento específico para situações de documentação "
-            "incompleta ou inconsistente.\n"
-            "No acompanhamento operacional realizado pela área responsável, foram identificados protocolos pendentes, "
-            "inclusive solicitações que ultrapassavam o prazo de referência. A situação foi formalmente monitorada e "
-            "compartilhada com os gestores responsáveis e com a área financeira para adoção das providências pertinentes.\n"
-            "A análise institucional também identificou situações em que determinados prestadores de serviços assistenciais "
-            "solicitam indevidamente ao beneficiário o pagamento direto por serviços que deveriam observar o fluxo regular "
-            "de cobertura e faturamento da Operadora. Essa prática pode contribuir para a geração de solicitações de "
-            "reembolso e constitui fator de risco que demanda tratamento sob as perspectivas assistencial, operacional, "
-            "ética e de compliance.\n"
-            "Em resposta a esse cenário, a Postal Saúde instaurou internamente Comitê de Procedimento Ético, destinado à "
-            "análise de situações que possam envolver condutas inadequadas ou indícios de fraude relacionados aos "
-            "prestadores assistenciais, observados os procedimentos internos aplicáveis.\n"
-            "Paralelamente, encontra-se em desenvolvimento, em conjunto com a área de Comunicação, campanha educativa "
-            "dirigida aos prestadores assistenciais, destinada a esclarecer as condutas inadequadas relacionadas à cobrança "
-            "direta do beneficiário e reforçar os procedimentos que devem ser observados na relação com a Operadora e seus "
-            "beneficiários.\n"
-            "Também está em desenvolvimento Código de Conduta Ética para Prestadores Assistenciais, com a finalidade de "
-            "estabelecer, de forma objetiva, os padrões de conduta esperados da rede prestadora, fortalecendo os mecanismos "
-            "de orientação, prevenção, integridade e responsabilização.\n"
-            "As iniciativas integram o processo de fortalecimento do Compliance da Postal Saúde, ampliando a abordagem "
-            "preventiva sobre os riscos relacionados à atuação da rede assistencial."
+            "A Postal Saúde dispõe de fluxo formal para o processamento das solicitações de reembolso (POP009 – Prover "
+            "Reembolso Assistencial – Versão 4), estabelecendo prazo de até 30 dias corridos contado do recebimento da "
+            "documentação completa. No acompanhamento operacional, foram identificados protocolos pendentes além do prazo "
+            "de referência, monitorados em conjunto com a área financeira. Identificaram-se também situações em que "
+            "prestadores solicitam indevidamente pagamento direto ao beneficiário, motivando a instauração do Comitê de "
+            "Procedimento Ético, campanha educativa e Código de Conduta Ética para Prestadores Assistenciais."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• A Postal Saúde vem realizando o saneamento das pendências identificadas no processo de reembolso, sob "
-            "condução da área responsável, com acompanhamento dos protocolos e atuação direcionada sobre os casos que "
-            "ultrapassaram o prazo estabelecido.\n"
-            "• O processo encontra-se em fase de aperfeiçoamento integrado com a área Financeira, mediante revisão dos "
-            "fluxos e das interfaces relacionadas ao processamento e pagamento dos reembolsos.\n"
-            "• Em conjunto com a área de Tecnologia da Informação, estão sendo desenvolvidas medidas de automação "
-            "destinadas a reduzir intervenções manuais, ampliar a rastreabilidade das etapas e fortalecer os controles do processo.\n"
-            "• No âmbito da rede prestadora, encontram-se em implementação as iniciativas relacionadas ao Comitê de "
-            "Procedimento Ético, à apuração de situações que possam envolver condutas inadequadas ou indícios de fraude e "
-            "ao fortalecimento dos mecanismos de orientação e prevenção.\n"
-            "• Também estão em desenvolvimento, em conjunto com a área de Comunicação, a campanha educativa dirigida aos "
-            "prestadores assistenciais e o Código de Conduta Ética para Prestadores Assistenciais.\n"
-            "• As pendências atualmente identificadas estão sendo tratadas pela área responsável, com previsão de "
-            "saneamento até outubro de 2026, concomitantemente ao avanço das medidas de aperfeiçoamento processual e tecnológico."
+            "• Saneamento das pendências identificadas no processo de reembolso, com acompanhamento dos protocolos e "
+            "atuação direcionada sobre os casos que ultrapassaram o prazo estabelecido.\n"
+            "• Aperfeiçoamento integrado com a área Financeira, mediante revisão dos fluxos e interfaces de processamento e pagamento.\n"
+            "• Desenvolvimento de medidas de automação junto à TI para reduzir intervenções manuais e ampliar a rastreabilidade.\n"
+            "• Implementação do Comitê de Procedimento Ético, campanha educativa e Código de Conduta Ética para Prestadores.\n"
+            "• Tratamento das pendências identificadas com previsão de saneamento até outubro de 2026."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "O tratamento da matéria será acompanhado por indicadores capazes de demonstrar a redução do passivo e a "
-            "evolução do processo, contemplando:\n"
+            "O tratamento da matéria é acompanhado por indicadores capazes de demonstrar a redução do passivo e a evolução do processo:\n"
             "• estoque de solicitações pendentes;\n"
             "• quantidade e percentual de processos fora do prazo;\n"
             "• percentual de solicitações processadas dentro do prazo;\n"
             "• tempo médio de processamento;\n"
-            "• pendências documentais;\n"
-            "• negativas e respectivas reanálises;\n"
-            "• divergências de valores;\n"
+            "• pendências documentais, negativas, reanálises e divergências de valores;\n"
             "• tempo entre processamento e pagamento;\n"
-            "• NIPs relacionadas a reembolso;\n"
-            "• ocorrências relacionadas à conduta de prestadores;\n"
-            "• evolução do indicador de Falhas de Reembolso.\n\n"
-            "O acompanhamento será realizado pelas áreas responsáveis, com reporte à governança competente e tratamento "
-            "dos desvios identificados. A conclusão do ciclo de saneamento previsto para outubro de 2026 será acompanhada "
-            "da avaliação dos resultados alcançados e da efetividade das melhorias implementadas, especialmente quanto à "
-            "tempestividade, rastreabilidade e prevenção de recorrências."
+            "• NIPs relacionadas a reembolso e evolução do indicador de Falhas de Reembolso."
         ),
         "historico_planilha": {
             "Status 08/2026": (
                 "GERED\n"
-                "Em atenção às informações contidas no item medidas implementadas e em implementação, seguem nossas considerações:\n"
-                "• Monitoramento dos processos de Garantia de Atendimento e Reembolso: GERED/CODER é responsável pelo monitoramento // A execução é de responsabilidade da GEREL - UAR/NAR;\n"
-                "• Processamento dos Reembolsos Assistenciais e efetivo pagamento aos beneficiários: Responsabilidade da GEFAC/COANF e GECOF/COPAG, fazendo-se necessária a revisão dos fluxos e normativos pelas respectivas áreas;\n"
-                "• Recursos Tecnológicos: Em andamento a solicitação para que no APP, quando o beneficiário solicitar Reembolso Integral, seja obrigatório informar o protocolo de atendimento;\n"
-                "• Rede Assistencial (Prestadores): Está sob a gestão da CONEC e os processos estão sendo revisados visando garantir o alinhamento com as diretrizes de compliance.\n\n"
-                "Processo de Garantia de Atendimento e Reembolso (Agosto/26):\n"
+                "• Monitoramento dos processos de Garantia de Atendimento e Reembolso: GERED/CODER é responsável pelo monitoramento // Execução: GEREL - UAR/NAR;\n"
+                "• Processamento e pagamento: Responsabilidade da GEFAC/COANF e GECOF/COPAG;\n"
+                "• Recursos Tecnológicos: Em andamento solicitação para obrigatoriedade do protocolo de atendimento no APP ao solicitar Reembolso Integral;\n"
+                "• Rede Assistencial: Sob gestão da CONEC em revisão normativa.\n"
+                "Indicadores Ago/26:\n"
                 "- Garantia de Atendimento: Dentro do Prazo: 236 | Fora do Prazo: 1.631 | Total: 1.867 (+27,70%)\n"
-                "- Reembolso: Dentro do Prazo: 361 | Fora do Prazo: 715 | Total: 1.076 (+2,09%)\n"
-                "Infere-se que a variação no volume de processos em agosto/26 ocorre devido à sazonalidade do período de férias escolares. Paralelamente, a GERED/CODER tem atuado fortemente no monitoramento e auxílio às UAR/NAR com maior volume de processos."
+                "- Reembolso: Dentro do Prazo: 361 | Fora do Prazo: 715 | Total: 1.076 (+2,09%)"
             ),
             "Status 09/2026": (
                 "GERED\n"
-                "Em atenção às informações contidas no item medidas implementadas e em implementação, seguem nossas considerações:\n"
-                "• Monitoramento dos processos de Garantia de Atendimento e Reembolso: GERED/CODER é responsável pelo monitoramento // Execução: GEREL - UAR/NAR;\n"
-                "• Recursos Tecnológicos: Em andamento a solicitação para obrigatoriedade do protocolo de atendimento no APP para Reembolso Integral;\n"
-                "• Rede de prestadores: Sob gestão da CONEC com processos em revisão.\n\n"
-                "Evolução Ago/26 a Set/26 (Redução de pendências):\n"
-                "- Garantia de Atendimento: Ago/26 Total: 1.867 -> Set/26: Dentro do Prazo: 200 | Fora do Prazo: 1.370 | Total: 1.570 (-15,91% de redução)\n"
-                "- Reembolso: Ago/26 Total: 1.076 -> Set/26: Dentro do Prazo: 444 | Fora do Prazo: 442 | Total: 886 (-17,66% de redução)\n"
-                "Decorrido o período de férias e como reflexo do monitoramento mais extensivo da GERED/CODER, é perceptível a redução dos protocolos de garantia, especialmente nos processos fora do prazo."
+                "Identificada redução dos processos de garantia e reembolso no período de agosto a setembro/2026:\n"
+                "- Garantia de Atendimento: Ago/26 (1.867) -> Set/26: Dentro do Prazo: 200 | Fora do Prazo: 1.370 | Total: 1.570 (-15,91% de redução)\n"
+                "- Reembolso: Ago/26 (1.076) -> Set/26: Dentro do Prazo: 444 | Fora do Prazo: 442 | Total: 886 (-17,66% de redução)\n"
+                "Decorrido o período de férias e como reflexo do monitoramento extensivo da GERED/CODER, observa-se redução consistente dos protocolos fora do prazo."
             ),
             "Status 10/2026": (
                 "GERED/CODER\n"
-                "Em atenção às informações contidas no item medidas implementadas e em implementação, seguem nossas considerações:\n"
-                "• Monitoramento dos processos de Garantia de Atendimento e Reembolso: GERED/CODER é responsável pelo monitoramento // Execução: GEREL - UAR/NAR;\n"
-                "• Recursos Tecnológicos: Foi implementada em 01/10/2026 a obrigatoriedade de o beneficiário informar o número do protocolo de atendimento quando solicitar Reembolso Integral no aplicativo. Essa medida visa a rastreabilidade dos processos de garantia de atendimento liberados como Reembolso Integral. Caso o beneficiário não informe o protocolo, poderá solicitar o Reembolso na modalidade Livre Escolha.\n\n"
-                "Processo de Garantia de Atendimento e Reembolso Integral:\n"
-                "- Garantia de Atendimento: Ago/26 (1.867) -> Set/26 (1.570, redução de -15,91%)\n"
-                "- Reembolso: Ago/26 (1.076) -> Set/26 (886, redução de -17,66%)"
+                "Implementada em 01/10/2026 a obrigatoriedade de o beneficiário informar o número do protocolo de atendimento quando solicitar Reembolso Integral no aplicativo, garantindo rastreabilidade dos processos de Garantia de Atendimento liberados como Reembolso Integral."
             ),
-            "Complemento ANS 26/10": ""
+            "Complemento ANS 26/10": "N/A"
         }
     },
     {
@@ -196,79 +169,41 @@ ITENS_PRASS_INICIAIS = [
             "A Nota Técnica nº 39/2026 aponta como anormalidade administrativa grave a demora na liberação de procedimentos "
             "e consultas em conjunto em decorrência de insuficiência de rede prestadora.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde possui processo formal de Garantia de Atendimento destinado justamente ao tratamento de "
-            "situações de inexistência ou indisponibilidade de rede assistencial.\n"
-            "O Manual define indisponibilidade como a situação em que existe prestador para o serviço ou procedimento "
-            "demandado, mas este não se encontra disponível dentro dos prazos estabelecidos pela ANS. Define, ainda, "
-            "inexistência como a ausência de prestador apto a oferecer o serviço ou procedimento no município demandado.\n"
-            "Nessas situações, a Postal Saúde deve disponibilizar a Garantia de Atendimento em município limítrofe ou "
-            "Região de Saúde, observando as regras e os prazos regulatórios.\n"
-            "O Manual determina que sejam esgotadas, de forma ordenada, as alternativas assistenciais:\n"
+            "A Postal Saúde possui processo formal de Garantia de Atendimento destinado ao tratamento de situações de "
+            "inexistência ou indisponibilidade de rede assistencial, determinando o esgotamento ordenado das alternativas:\n"
             "1. rede credenciada;\n"
             "2. contratação direta;\n"
-            "3. Tratamento Fora do Domicílio;\n"
+            "3. Tratamento Fora do Domicílio (TFD);\n"
             "4. reembolso integral.\n"
-            "Também determina que as negociações de contratação direta sejam formalizadas e anexadas ao sistema para fins "
-            "de evidência.\n"
-            "Portanto, a insuficiência de rede é reconhecida no próprio processo como evento de risco a ser tratado "
-            "mediante alternativas assistenciais, e não como justificativa para postergação indefinida do atendimento."
+            "As negociações de contratação direta são formalizadas e anexadas ao sistema para fins de evidência."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• A Postal Saúde mantém processo estruturado para gestão da Garantia de Atendimento, com atribuição formal da "
-            "área responsável pela gestão estratégica da rede para assegurar sua composição assistencial, identificar "
-            "vulnerabilidades e estabelecer os processos de Contratação Direta, TFD e Reembolso Assistencial.\n"
-            "• O Manual estabelece que a busca por atendimento considere rede direta, rede indireta, parcerias e "
-            "Telemedicina, seguida, quando necessário, de contratação direta, TFD e reembolso integral.\n"
-            "• A contratação direta exige formalização da negociação e manutenção das evidências no sistema.\n"
-            "• Para TFD, o Manual determina que o atendimento seja garantido conforme o prazo da ANS e que sejam "
-            "providenciadas as autorizações necessárias para as despesas relacionadas ao deslocamento.\n"
-            "• Esses mecanismos constituem medidas concretas para impedir que uma deficiência localizada de rede resulte "
-            "automaticamente em desassistência."
+            "• Processo estruturado para gestão da Garantia de Atendimento, com atribuição formal da área estratégica de rede "
+            "para identificar vulnerabilidades e estabelecer Contratação Direta, TFD e Reembolso Assistencial.\n"
+            "• Busca por atendimento considerando rede direta, rede indireta, parcerias e Telemedicina, seguida de "
+            "contratação direta, TFD e reembolso integral.\n"
+            "• Formalização obrigatória das negociações de contratação direta e manutenção das evidências no sistema."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "A operacionalização da Garantia de Atendimento prevê:\n"
-            "• acolhimento da solicitação;\n"
-            "• análise da cobertura;\n"
-            "• verificação da rede credenciada;\n"
-            "• comprovação sistêmica das tentativas de agendamento;\n"
-            "• definição da alternativa assistencial;\n"
-            "• autorização de reembolso integral, quando aplicável; e\n"
-            "• comunicação ao beneficiário.\n\n"
-            "O Manual estabelece ainda que o retorno ao beneficiário observe os prazos máximos da ANS e que os registros "
-            "dos contatos, tentativas de agendamento, negativas e protocolos sejam mantidos de forma integral e organizada.\n"
-            "O monitoramento da rede deve permitir identificar vulnerabilidades e orientar ações de composição ou "
-            "recomposição da rede assistencial.\n"
-            "Eventual demora decorrente de insuficiência de rede será analisada sob duas perspectivas:\n"
-            "1. causa assistencial: indisponibilidade ou inexistência efetiva do prestador;\n"
-            "2. resposta operacional: tempo e adequação das providências adotadas pela Operadora para assegurar alternativa assistencial."
+            "A operacionalização da Garantia de Atendimento prevê: acolhimento da solicitação, análise da cobertura, "
+            "verificação da rede credenciada, comprovação sistêmica das tentativas de agendamento, definição da alternativa "
+            "assistencial, autorização de reembolso integral (quando aplicável) e comunicação ao beneficiário nos prazos da ANS."
         ),
         "historico_planilha": {
             "Status 08/2026": (
                 "GERED\n"
-                "Em atenção às informações contidas neste item, seguem nossas considerações:\n"
-                "Abaixo, listamos os normativos vigentes da Garantia de Atendimento:\n"
-                "• MAN 037 (versão 3) – publicado em 11/08/2026\n"
-                "• POP 009 (versão 4) – publicado em 13/08/2026\n"
-                "• POP 012 (versão 1) – publicado em 13/08/2026\n"
-                "• POP 013 (versão 0) – publicado em 13/08/2026\n"
-                "• IOT 222 (versão 1) – publicado em 02/08/2021\n"
-                "• IOT 224 (versão 1) – publicado em 23/02/2021\n"
-                "Atualmente, as instruções normativas IOT 222 e IOT 224 estão em processo de revisão para alinhamento ao cenário vigente. Paralelamente, solicitamos subsídios às UAR/NAR a fim de mapear e atualizar as informações sobre os prestadores ativos no sistema. Em complemento, o painel de análise de vulnerabilidade está em processo de revisão."
+                "Normativos vigentes da Garantia de Atendimento:\n"
+                "• MAN 037 (v.3 – 11/08/2026) | POP 009 (v.4 – 13/08/2026) | POP 012 (v.1 – 13/08/2026) | POP 013 (v.0 – 13/08/2026) | IOT 222 | IOT 224.\n"
+                "As instruções normativas IOT 222 e IOT 224 e o painel de análise de vulnerabilidade encontram-se em revisão metodológica."
             ),
             "Status 09/2026": (
                 "GERED\n"
-                "Atualmente, as instruções normativas IOT 222 e IOT 224 estão em processo de revisão para alinhamento ao cenário vigente. Paralelamente, solicitamos subsídios às UAR/NAR a fim de mapear e atualizar as informações sobre os prestadores ativos no sistema. Em complemento à ação de atualização dos normativos, o painel de análise de vulnerabilidade está em processo de revisão, tanto na metodologia de extração dos dados quanto na sua elaboração."
+                "Continuidade da revisão das instruções normativas IOT 222 e IOT 224, mapeamento de prestadores ativos junto às UAR/NAR e revisão metodológica do painel de análise de vulnerabilidade."
             ),
-            "Status 10/2026": (
-                "GERED/CODER\n"
-                "No que diz respeito às ações da GERED/CODER, registramos que o painel de análise de vulnerabilidade encontra-se em processo de revisão, abrangendo a metodologia de extração, tratamento e análise dos dados utilizados em sua construção. Em decorrência das avaliações realizadas, verificou-se a necessidade de reestruturação do modelo atualmente adotado, tendo sido formalizada, em 08/10/2026, demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização do painel de vulnerabilidade."
-            ),
-            "Complemento ANS 26/10": (
-                "GERED/CODER — Subitem: Vulnerabilidade de Rede\n"
-                "No que diz respeito às ações da GERED/CODER, registramos que o painel de análise de vulnerabilidade encontra-se em processo de revisão, abrangendo a metodologia de extração, tratamento e análise dos dados utilizados em sua construção. Foi formalizada, em 08/10/2026, demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização do painel de vulnerabilidade."
-            )
+            "Status 10/2026": TXT_CODER_OUT_26,
+            "Complemento ANS 26/10": f"Subitem: Vulnerabilidade de Rede\n{TXT_CODER_OUT_26}"
         }
     },
     {
@@ -277,67 +212,41 @@ ITENS_PRASS_INICIAIS = [
         "areas_atribuidas": ["CODER", "CONEC"],
         "apontamento_ans": (
             "Apontamento da ANS\n"
-            "A Nota Técnica nº 39 aponta, como anormalidade administrativa grave de natureza assistencial, a insuficiência "
-            "ou inexistência de rede prestadora para realização de consultas e procedimentos de cobertura obrigatória, "
-            "quando essa condição acarreta desassistência ou obriga o beneficiário a realizar pagamento particular para "
-            "posterior reembolso, inclusive diante de irregularidades na efetivação desse reembolso.\n\n"
+            "A Nota Técnica nº 39 aponta insuficiência ou inexistência de rede prestadora para realização de consultas e "
+            "procedimentos de cobertura obrigatória, acarretando desassistência ou pagamento particular para posterior reembolso.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde reconhece que a disponibilidade e a suficiência da rede assistencial constituem fatores "
-            "diretamente relacionados à garantia de acesso e à continuidade da assistência.\n"
-            "A Operadora dispõe de processo formal de Garantia de Atendimento, que contempla acolhimento da demanda, "
-            "análise de cobertura, verificação da rede disponível, comprovação das tentativas de agendamento, definição da "
-            "alternativa assistencial e comunicação ao beneficiário. Nas situações de inexistência ou indisponibilidade de "
-            "prestador, o processo prevê a utilização de alternativas assistenciais destinadas a preservar o atendimento, "
-            "inclusive contratação direta, Tratamento Fora do Domicílio e, quando cabível, reembolso integral.\n"
-            "No que se refere aos casos em que o beneficiário realiza pagamento particular, o tratamento do respectivo "
-            "reembolso está diretamente relacionado ao processo analisado no item 8.1.2 deste PRASS."
+            "A Operadora dispõe de processo formal de Garantia de Atendimento que contempla acolhimento da demanda, análise "
+            "de cobertura, verificação da rede disponível, comprovação das tentativas de agendamento e definição da "
+            "alternativa assistencial (contratação direta, TFD ou reembolso integral). O tratamento do reembolso vincula-se ao item 8.1.2."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• A Postal Saúde vem adotando medidas destinadas ao fortalecimento da rede e à redução das vulnerabilidades "
-            "relacionadas à suficiência assistencial.\n"
-            "• Entre essas medidas está a implementação do Compartilhamento de Gestão de Riscos e Rede Assistencial, "
-            "concebido para ampliar a disponibilidade e a capilaridade da rede, especialmente em localidades nas quais "
-            "foram identificadas vulnerabilidades ou necessidade de complementação da estrutura assistencial.\n"
-            "• O modelo contempla etapas de identificação da necessidade, avaliação técnica, implantação, operação, "
-            "monitoramento, avaliação de resultados e melhoria contínua.\n"
-            "• Paralelamente, permanecem disponíveis os mecanismos previstos no processo de Garantia de Atendimento para "
-            "situações de inexistência ou indisponibilidade de prestadores.\n"
-            "• Quanto ao reembolso, as medidas de saneamento e aperfeiçoamento estão sendo conduzidas conforme descrito no item 8.1.2."
+            "• Implementação do Compartilhamento de Gestão de Riscos e Rede Assistencial para ampliar a disponibilidade e capilaridade da rede.\n"
+            "• Manutenção dos mecanismos previstos no processo de Garantia de Atendimento para situações de inexistência ou indisponibilidade.\n"
+            "• Condução das medidas de saneamento e aperfeiçoamento do reembolso conforme item 8.1.2."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
             "O tratamento do risco ocorre em duas dimensões complementares:\n"
-            "I – Gestão da rede: identificação de insuficiências e vulnerabilidades, recomposição e ampliação da rede e "
-            "utilização de mecanismos de compartilhamento e contratação alternativa;\n"
-            "II – Garantia individual de acesso: adoção das alternativas assistenciais previstas quando identificada "
-            "inexistência ou indisponibilidade de prestador.\n\n"
-            "O processo prevê registro das tentativas de agendamento e das providências adotadas, possibilitando "
-            "rastreabilidade da atuação institucional.\n"
-            "As ocorrências relacionadas a pagamento particular e posterior reembolso permanecem vinculadas ao "
-            "monitoramento específico do processo de reembolso, permitindo a análise da cadeia completa:\n"
-            "indisponibilidade de rede → alternativa assistencial → eventual pagamento particular → reembolso → encerramento da demanda."
+            "I – Gestão da rede: identificação de insuficiências e vulnerabilidades, recomposição e ampliação da rede;\n"
+            "II – Garantia individual de acesso: adoção das alternativas assistenciais previstas quando identificada inexistência ou indisponibilidade."
         ),
         "historico_planilha": {
             "Status 08/2026": (
                 "GERED\n"
-                "Em atenção às informações contidas neste item, ratificamos as informações constantes no Diagnóstico Institucional:\n"
-                "1) Garantia de atendimento, reembolso, medidas de saneamento e aperfeiçoamento: conduzidas conforme descrito no item 8.1.2;\n"
-                "2) Gestão da Rede Assistencial (Direta/Indireta): sob a gestão da CONEC, com processos em revisão para alinhamento às diretrizes de compliance;\n"
+                "1) Garantia de atendimento e reembolso: conduzidos conforme item 8.1.2;\n"
+                "2) Gestão da Rede Assistencial (Direta/Indireta): sob gestão da CONEC em revisão de compliance;\n"
                 "3) Compartilhamento de Gestão de Riscos (Encapsulamento): sob responsabilidade da GEREL."
             ),
             "Status 09/2026": (
                 "GERED\n"
-                "Ratificamos as informações constantes no Diagnóstico Institucional:\n"
-                "1) Garantia de atendimento e reembolso conduzidos conforme descrito no item 8.1.2;\n"
-                "2) Gestão da Rede Assistencial (Direta/Indireta) sob gestão da CONEC em revisão normativa;\n"
-                "3) Compartilhamento de Gestão de Riscos sob responsabilidade da GEREL."
+                "Ratificado o acompanhamento integrado ao item 8.1.2 (CODER), revisão normativa da rede direta/indireta (CONEC) e gestão do compartilhamento de riscos (GEREL)."
             ),
             "Status 10/2026": (
                 "GERED/CODER\n"
-                "Implementada em 01/10/2026 a obrigatoriedade de o beneficiário informar o número do protocolo de atendimento quando solicitar Reembolso Integral no aplicativo, garantindo rastreabilidade dos processos de Garantia de Atendimento. Redução acumulada de -15,91% nos processos de Garantia de Atendimento e de -17,66% nos processos de Reembolso entre agosto e setembro/2026."
+                "Implementada em 01/10/2026 a obrigatoriedade do protocolo de atendimento na solicitação de Reembolso Integral no APP, acompanhada da redução de -15,91% nos processos de Garantia de Atendimento e -17,66% nos processos de Reembolso."
             ),
-            "Complemento ANS 26/10": ""
+            "Complemento ANS 26/10": "N/A"
         }
     },
     {
@@ -349,66 +258,38 @@ ITENS_PRASS_INICIAIS = [
             "A Nota Técnica nº 39 aponta relatos de suspensão de atendimento, inclusive por prestadores hospitalares, em "
             "decorrência de inadimplência da Operadora.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde reconhece que o período analisado foi marcado por relevante restrição financeira decorrente da "
-            "irregularidade dos repasses da mantenedora, circunstância que produziu impactos sobre a capacidade de "
-            "cumprimento tempestivo de obrigações financeiras perante parte da rede prestadora.\n"
-            "A documentação institucional demonstra que a restrição financeira repercutiu sobre o relacionamento com "
-            "prestadores, incluindo situações de inadimplência, suspensão de atendimento e descredenciamento.\n"
-            "A Operadora, portanto, não trata o fato histórico como inexistente ou meramente pontual. O diagnóstico "
-            "institucional considera que houve efetiva exposição ao risco de desassistência decorrente da combinação entre "
-            "restrição financeira e dependência da rede prestadora.\n"
-            "A questão central, entretanto, passou a ser a adoção de medidas capazes de reduzir a vulnerabilidade "
-            "assistencial decorrente desse cenário."
+            "A Postal Saúde reconhece que o período analisado foi marcado por restrição financeira decorrente da "
+            "irregularidade dos repasses da mantenedora, impactando obrigações financeiras perante parte da rede prestadora "
+            "e exigindo medidas estruturantes para reduzir a vulnerabilidade assistencial."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• Como resposta estruturante, a Postal Saúde implementou o Compartilhamento de Gestão de Riscos e Rede "
-            "Assistencial, utilizando redes disponibilizadas por operadoras parceiras.\n"
-            "• A medida foi concebida para ampliar a disponibilidade de prestadores, aumentar a capilaridade da rede, "
-            "reduzir vulnerabilidades assistenciais e proporcionar alternativas diante de eventual indisponibilidade da rede direta.\n"
-            "• A documentação relativa ao projeto demonstra que sua implementação foi precedida de análises assistenciais, "
-            "regulatórias, operacionais, atuariais, econômico-financeiras e jurídicas, permitindo avaliar a estratégia sob "
-            "perspectiva multidimensional.\n"
-            "• O modelo também contempla ciclo de implantação, operação, monitoramento, avaliação de resultados e melhoria contínua."
+            "• Implementação do Compartilhamento de Gestão de Riscos e Rede Assistencial utilizando redes de operadoras parceiras.\n"
+            "• Monitoramento e negociação direta com prestadores suspensos e direcionamento assistencial via Garantia de Atendimento."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "O risco passou a ser tratado de forma integrada entre as dimensões financeira, assistencial, regulatória e de "
-            "gestão da rede.\n"
-            "O compartilhamento de rede e risco não é considerado substituto da responsabilidade da Postal Saúde perante "
-            "seus beneficiários. Ao contrário, constitui mecanismo de mitigação destinado a ampliar a capacidade "
-            "assistencial e reduzir a exposição decorrente de eventual descontinuidade de prestadores.\n"
-            "O monitoramento contempla a suficiência da rede, a continuidade da assistência, os indicadores assistenciais, "
-            "reclamações, NIPs e demais sinais de risco relacionados à disponibilidade de prestadores.\n"
-            "A estratégia também incorpora a necessidade de planejamento de contingência para eventual descontinuidade das "
-            "redes compartilhadas, evitando a criação de nova dependência sem mecanismo de mitigação."
+            "O risco é tratado de forma integrada entre as dimensões financeira, assistencial, regulatória e de gestão da rede, "
+            "monitorando a suficiência da rede, continuidade da assistência, indicadores assistenciais, reclamações e NIPs."
         ),
         "historico_planilha": {
             "Status 08/2026": (
                 "GERED\n"
-                "No que se refere aos itens de controle de rede, seguem nossos esclarecimentos:\n"
-                "• Descredenciamento ou restrição de atendimento: Aplicação das IOTs 031, 036 e 068, avaliação de substituição/expansão da rede e fortalecimento da rastreabilidade por meio de painel gerencial;\n"
-                "• Estudos de suficiência e capilaridade da rede: Contemplados no painel de análise de vulnerabilidade em revisão;\n"
-                "• Mecanismos de monitoramento assistencial e regulatório: Conduzidos pela GERED/CODER conforme item 8.1.2.\n"
-                "GEREM: Ampliada a rede assistencial por meio de convênios de reciprocidade/compartilhamento de risco (AMIL RJ, UNIMED CNU e UNIMED CENTRO OESTE PAULISTA)."
+                "• Aplicação das IOTs 031 (descredenciamento), 036 (credenciamento) e 068 (higienização) e desenvolvimento de dashboard de controle;\n"
+                "• Estudos de suficiência e capilaridade contemplados na revisão do painel de vulnerabilidade;\n"
+                "• Monitoramento assistencial conduzido pela CODER conforme item 8.1.2;\n"
+                "• Parcerias de compartilhamento de risco firmadas até ago/2026: AMIL RJ, UNIMED CNU e UNIMED CENTRO OESTE PAULISTA."
             ),
             "Status 09/2026": (
                 "GERED\n"
-                "Manutenção do acompanhamento das ocorrências de suspensão, revisão metodológica do painel de vulnerabilidade pela CODER, aplicação das IOTs 031, 036 e 068 e vigência das parcerias de compartilhamento de rede (AMIL RJ, UNIMED CNU e UNIMED CENTRO OESTE PAULISTA)."
+                "Manutenção do monitoramento das suspensões, aplicação das IOTs 031, 036 e 068, evolução do painel de vulnerabilidade e vigência dos convênios de compartilhamento de risco."
             ),
-            "Status 10/2026": (
-                "GERED/CODER\n"
-                "Formalizada em 08/10/2026 demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização do painel de vulnerabilidade, visando aprimorar a qualidade das informações e fortalecer a rastreabilidade das bases utilizadas."
-            ),
+            "Status 10/2026": TXT_CODER_OUT_26,
             "Complemento ANS 26/10": (
                 "GERED/CODER — Subitem: Garantia de Atendimento em virtude das suspensões de atendimento\n"
-                "Foram adotadas as medidas imediatas necessárias para assegurar a continuidade da assistência aos beneficiários e mitigar os impactos das suspensões contratuais, viabilizando o direcionamento do fluxo assistencial para prestadores aptos da rede credenciada, disponibilização de prestadores (credenciados ou não) ou liberação de reembolso integral nos prazos da RN nº 566/2022 da ANS.\n\n"
+                "Adotadas medidas imediatas para assegurar a continuidade da assistência aos beneficiários e mitigar os impactos das suspensões contratuais, mediante direcionamento do fluxo assistencial para prestadores aptos da rede credenciada, contratação direta ou reembolso integral nos prazos da RN nº 566/2022 da ANS.\n\n"
                 "GERED/CONEC — Subitem: Suspensão de atendimento por inadimplência\n"
-                "Em atendimento ao Ofício nº 108/2026 da ANS, apresentamos os procedimentos adotados para:\n"
-                "1. Registro e controle das suspensões de atendimento;\n"
-                "2. Monitoramento gerencial das ocorrências;\n"
-                "3. Atuação junto aos prestadores e formalização de acordos de quitação;\n"
-                "4. Evidências documentais."
+                "Em atendimento ao Ofício nº 108/2026 da ANS, apresentados os procedimentos adotados para: 1. Registro e controle das suspensões de atendimento; 2. Monitoramento gerencial das ocorrências; 3. Atuação junto aos prestadores e formalização de acordos de quitação; 4. Evidências documentais."
             )
         }
     },
@@ -418,73 +299,40 @@ ITENS_PRASS_INICIAIS = [
         "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
         "apontamento_ans": (
             "Apontamento da ANS\n"
-            "A ANS apontou situação relacionada à não disponibilização, de forma clara, da rede assistencial aos "
-            "beneficiários, nos termos da regulamentação vigente, abrangendo aspectos relacionados à atualização das "
-            "informações da rede, à sua divulgação no portal corporativo e à comunicação das substituições de prestadores "
-            "de serviços de atenção à saúde.\n\n"
+            "A ANS apontou situação relacionada à não disponibilização clara da rede assistencial aos beneficiários, "
+            "abrangendo atualização das informações da rede, divulgação no portal corporativo e comunicação das substituições.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde possui estrutura formal de governança e gestão da rede assistencial, sob responsabilidade da "
-            "Gerência Executiva de Rede (GERED), com processos definidos para credenciamento, recredenciamento, "
-            "descredenciamento, substituição, suspensão, higienização cadastral e monitoramento da vulnerabilidade da rede.\n"
-            "A rede assistencial apresenta dinâmica permanente de expansão, alteração e reorganização. Em dezembro de 2024, "
-            "a Operadora contava com 12.781 prestadores credenciados na rede direta. Entre janeiro de 2025 e julho de 2026, "
-            "foram incorporados 305 novos prestadores, alcançando 13.086 prestadores na rede direta, além de 27.100 "
-            "prestadores disponibilizados pela rede indireta (CNU), totalizando 40.186 prestadores.\n"
-            "No mesmo período, foram registrados 580 descredenciamentos, decorrentes de diferentes situações, incluindo "
-            "ausência de atendimento, solicitação do prestador, interesse da Operadora, alteração de CNPJ, encerramento "
-            "das atividades e migração de tipo de pessoa.\n"
-            "Nesse contexto, a Postal Saúde vem fortalecendo a integração entre a gestão operacional da rede, os controles "
-            "cadastrais, os sistemas corporativos e os mecanismos de disponibilização das informações, com foco na "
-            "tempestividade, consistência e confiabilidade dos dados apresentados aos beneficiários."
+            "A Postal Saúde possui estrutura formal de governança da rede sob responsabilidade da GERED. Entre janeiro/2025 "
+            "e julho/2026, foram incorporados 305 novos prestadores (alcançando 13.086 na rede direta e 27.100 na rede "
+            "indireta CNU, totalizando 40.186 prestadores) e registrados 580 descredenciamentos."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• Manutenção de estrutura centralizada de gestão da rede assistencial pela GERED, com acompanhamento das "
-            "movimentações cadastrais e contratuais.\n"
-            "• Utilização do Painel de Vulnerabilidade da Rede Prestadora, que consolida informações relacionadas à "
-            "suficiência, distribuição geográfica, disponibilidade, cobertura assistencial e potenciais riscos de desassistência.\n"
-            "• Monitoramento contínuo dos credenciamentos, descredenciamentos, reativações, suspensões e demais alterações da rede.\n"
-            "• Aplicação de normativos e procedimentos internos específicos para credenciamento, descredenciamento, "
-            "recontratualização, higienização cadastral e suspensão de atendimento.\n"
-            "• Realização de análises de vulnerabilidade para subsidiar decisões de expansão, substituição e reorganização da rede assistencial.\n"
-            "• Fortalecimento dos controles sistêmicos e automatizados, com iniciativas voltadas à rastreabilidade e integração das informações.\n"
-            "• Revisão contínua dos processos operacionais relacionados à gestão da rede, com adoção do ciclo de melhoria "
-            "contínua para identificação e tratamento de eventuais inconsistências."
+            "• Estrutura centralizada de gestão da rede assistencial pela GERED.\n"
+            "• Utilização do Painel de Vulnerabilidade da Rede Prestadora.\n"
+            "• Monitoramento contínuo dos credenciamentos, descredenciamentos, reativações e suspensões.\n"
+            "• Aplicação das IOTs 031, 035, 036, 068 e 075 e fortalecimento dos controles sistêmicos."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "O apontamento está sendo tratado no âmbito do processo permanente de governança, monitoramento e melhoria "
-            "contínua da rede assistencial.\n"
-            "As movimentações da rede são acompanhadas pela GERED por meio dos sistemas corporativos e do Painel de "
-            "Vulnerabilidade, permitindo identificar alterações relevantes na composição, disponibilidade e suficiência da "
-            "rede e subsidiar as decisões de credenciamento, substituição, expansão ou reorganização.\n"
-            "Os processos de descredenciamento e suspensão de atendimento também são submetidos a avaliação quanto aos "
-            "seus potenciais impactos assistenciais.\n"
-            "Paralelamente, a Operadora vem aprimorando os controles sistêmicos e os fluxos operacionais destinados a "
-            "assegurar maior consistência entre a situação efetiva da rede, as bases corporativas e as informações "
-            "disponibilizadas aos beneficiários."
+            "O apontamento é tratado no processo permanente de governança e melhoria contínua da rede assistencial, "
+            "assegurando consistência entre a situação efetiva da rede, as bases corporativas e as informações divulgadas aos beneficiários."
         ),
         "historico_planilha": {
             "Status 08/2026": (
                 "GERED\n"
-                "• Ações CODER: Painel de Vulnerabilidade da Rede Prestadora para subsidiar decisões de expansão, substituição e reorganização.\n"
-                "• Ações CONEC: Revisão dos normativos de credenciamento, descredenciamento, recontratualização, higienização e suspensão.\n"
-                "• Ações COCAP: Disponibilização da rede no portal refletindo a base oficial, tratamento de notificações de inconsistências e publicação de substituições.\n"
-                "Composição da Rede (Ago/2026): Rede Direta: 12.399 | Rede Indireta: 30.194 | Total: 42.593 prestadores."
+                "• Ações CODER: Painel de Vulnerabilidade da Rede Prestadora;\n"
+                "• Ações CONEC: Revisão normativa de credenciamento, descredenciamento e suspensão;\n"
+                "• Ações COCAP: Disponibilização da rede em tempo real no portal, funcionalidade de reporte de inconsistências e consulta de substitutos.\n"
+                "Rede Assistencial (Ago/26): Rede Direta: 12.399 | Rede Indireta: 30.194 | Total: 42.593 prestadores."
             ),
             "Status 09/2026": (
-                "GERED (CODER, CONEC e COCAP)\n"
-                "Continuidade da revisão do painel de vulnerabilidade (CODER), revisão normativa (CONEC) e atualização contínua do portal e tratamento de inconsistências (COCAP).\n"
-                "Composição da Rede (Set/2026): Rede Direta: 12.357 | Rede Indireta: 30.268 | Total: 42.625 prestadores."
+                "GERED\n"
+                "Continuidade das ações de revisão do Painel de Vulnerabilidade (CODER), revisão normativa (CONEC) e atualização contínua do Guia de Saúde (COCAP).\n"
+                "Rede Assistencial (Set/26): Rede Direta: 12.357 | Rede Indireta: 30.268 | Total: 42.625 prestadores."
             ),
-            "Status 10/2026": (
-                "GERED/CODER\n"
-                "Formalizada em 08/10/2026 demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização do painel de vulnerabilidade, visando aprimorar a qualidade das informações e fortalecer a rastreabilidade das bases."
-            ),
-            "Complemento ANS 26/10": (
-                "GERED/CODER — Subitem: Vulnerabilidade de Rede\n"
-                "O painel de análise de vulnerabilidade encontra-se em processo de revisão metodológica de extração, tratamento e análise dos dados, com demanda formalizada em 08/10/2026 junto à TI para institucionalização da ferramenta."
-            )
+            "Status 10/2026": TXT_CODER_OUT_26,
+            "Complemento ANS 26/10": f"Subitem: Vulnerabilidade de Rede\n{TXT_CODER_OUT_26}"
         }
     },
     {
@@ -493,60 +341,40 @@ ITENS_PRASS_INICIAIS = [
         "areas_atribuidas": ["CODER", "COCAP", "CONEC"],
         "apontamento_ans": (
             "Apontamento da ANS\n"
-            "Foram identificados relatos relacionados à desatualização da rede efetivamente disponibilizada pela Operadora, "
-            "situação que pode comprometer a adequada orientação dos beneficiários quanto aos prestadores disponíveis para atendimento.\n\n"
+            "Foram identificados relatos relacionados à desatualização da rede efetivamente disponibilizada pela Operadora.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde possui processo formal de atualização e gestão da rede, entretanto, a dinâmica permanente de "
-            "credenciamentos, descredenciamentos, alterações cadastrais, suspensões e reorganizações exige atualização "
-            "contínua das informações.\n"
-            "No período de janeiro de 2025 a julho de 2026, foram registrados 305 novos credenciamentos e 580 "
-            "descredenciamentos, evidenciando a intensidade da movimentação da rede e, consequentemente, a necessidade de "
-            "mecanismos permanentes de higienização e atualização cadastral.\n"
-            "O diagnóstico institucional indica, portanto, que o ponto de atenção está relacionado à tempestividade e "
-            "integração das atualizações, e não à inexistência de estrutura ou processo formal de gestão da rede."
+            "No período de janeiro/2025 a julho/2026, foram registrados 305 novos credenciamentos e 580 descredenciamentos, "
+            "evidenciando a intensidade da movimentação da rede e a necessidade de mecanismos permanentes de higienização e "
+            "atualização cadastral tempestiva."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• Monitoramento sistemático das movimentações da rede.\n"
-            "• Utilização do Painel de Vulnerabilidade da Rede Prestadora.\n"
-            "• Aplicação da IOT 068, relativa à higienização da rede credenciada.\n"
-            "• Aplicação da IOT 031, relativa ao descredenciamento de prestadores.\n"
-            "• Aplicação da IOT 075, relativa aos casos de suspensão de atendimento.\n"
-            "• Aplicação da IOT 158, relativa ao monitoramento da proporção de prestadores com variação significativa no atendimento.\n"
-            "• Aplicação da IOT 224, relativa às rotinas dos relatórios de vulnerabilidade da rede.\n"
+            "• Monitoramento sistemático das movimentações da rede e utilização do Painel de Vulnerabilidade.\n"
+            "• Aplicação da IOT 068 (higienização da rede), IOT 031 (descredenciamento), IOT 075 (suspensão de atendimento), "
+            "IOT 158 e IOT 224.\n"
             "• Aprimoramento dos controles sistêmicos e automatizados voltados à rastreabilidade das movimentações."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "As movimentações da rede são acompanhadas pela GERED e submetidas aos fluxos institucionais correspondentes.\n"
-            "O Painel de Vulnerabilidade é utilizado para identificação de situações que possam representar risco de "
-            "desassistência, subsidiando medidas de expansão, substituição ou reorganização da rede.\n"
-            "As situações de descredenciamento e suspensão de atendimento são objeto de tratamento específico, inclusive "
-            "com identificação de alternativas assistenciais quando necessário.\n"
-            "O processo permanece em acompanhamento contínuo, com foco na redução de divergências entre a situação "
-            "operacional da rede e as informações disponibilizadas aos beneficiários."
+            "As movimentações da rede são acompanhadas pela GERED e submetidas aos fluxos institucionais correspondentes, "
+            "com foco na redução de divergências entre a situação operacional da rede e as informações disponibilizadas aos beneficiários."
         ),
         "historico_planilha": {
             "Status 08/2026": (
-                "GERED/CODER: Painel de análise de vulnerabilidade em processo de revisão metodológica.\n"
-                "COCAP: Executa diariamente análises focadas na qualificação contínua do cadastro e construção de painel de controle. A suspensão temporária (IOT 075) é aplicada estritamente nas hipóteses previstas na RN nº 585 da ANS (obras/reformas ou determinação sanitária/fiscal).\n"
-                "CONEC: Normativos em revisão visando alinhamento com diretrizes de compliance."
+                "GERED/CODER: Revisão do painel de análise de vulnerabilidade.\n"
+                "COCAP: Análises diárias focadas na qualificação contínua do cadastro, construção de painel de controle e aplicação estrita da IOT 075 nas hipóteses da RN nº 585 da ANS.\n"
+                "CONEC: Revisão dos normativos da área."
             ),
             "Status 09/2026": (
-                "GERED/CODER: Revisão metodológica do painel de vulnerabilidade.\n"
-                "COCAP: Análises diárias de qualificação cadastral, desenvolvimento de painel de controle e observância estrita da IOT 075 e RN nº 585/ANS.\n"
-                "CONEC: Revisão contínua dos normativos da área."
+                "GERED/CODER, COCAP e CONEC: Manutenção das rotinas diárias de qualificação cadastral, desenvolvimento do painel de controle e revisão normativa."
             ),
-            "Status 10/2026": (
-                "GERED/CODER: Formalizada em 08/10/2026 demanda junto à TI para desenvolvimento e institucionalização do painel de vulnerabilidade."
-            ),
+            "Status 10/2026": TXT_CODER_OUT_26,
             "Complemento ANS 26/10": (
-                "GERED/CODER — Subitem: Vulnerabilidade de Rede\n"
-                "O painel de análise de vulnerabilidade encontra-se em processo de revisão, tendo sido formalizada, em 08/10/2026, demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização da ferramenta.\n\n"
+                f"Subitem: Vulnerabilidade de Rede\n{TXT_CODER_OUT_26}\n\n"
                 "GERED/CONEC — Subitem: Atualização de normativos (MAN006 e IOT036)\n"
-                "O Manual de Credenciamento da Assistência Médico-Hospitalar (MAN006) encontra-se em revisão na plataforma DocSpider. A IOT 036.07 teve última atualização em 14/08/2026, com nova revisão prevista para 01/12/2027.\n\n"
+                "O Manual de Credenciamento MAN006 encontra-se em revisão na plataforma DocSpider. A IOT 036.07 teve última atualização em 14/08/2026, com nova revisão prevista para 01/12/2027.\n\n"
                 "GERED/COCAP — Subitem: Bases de rede e controles de atualização\n"
-                "A Postal Saúde vem desenvolvendo ações voltadas ao aprimoramento dos processos de extração, atualização, monitoramento e higienização das informações cadastrais da rede assistencial, em atendimento ao Ofício nº 108/2026 da ANS. Nesse contexto, foram disponibilizadas bases cadastrais para análise e identificação de inconsistências, além da formalização do chamado GLPI nº 31043, destinado à implementação de relatório de movimentações cadastrais com identificação das inclusões, alterações, exclusões, datas e responsáveis. Também são realizadas consultas ao sistema BENNER, por meio do relatório POSTAL 988, para identificação de prestadores sem atendimento nos últimos 12 meses, subsidiando os procedimentos de higienização da rede. Adicionalmente, foram apresentadas as IOTs 031, 068 e 075, que regulamentam os processos de descredenciamento, higienização e suspensão de atendimento."
+                "A Postal Saúde vem desenvolvendo ações voltadas ao aprimoramento dos processos de extração, atualização, monitoramento e higienização das informações cadastrais da rede assistencial, em atendimento ao Ofício nº 108/2026 da ANS. Foram disponibilizadas bases cadastrais (.CSV), formalizado o chamado GLPI nº 31043 para relatório de movimentações cadastrais com data e responsável, extraído o relatório POSTAL 988 no sistema BENNER para higienização da rede (IOT 068) e apresentadas as IOTs 031, 068 e 075."
             )
         }
     },
@@ -557,49 +385,36 @@ ITENS_PRASS_INICIAIS = [
         "apontamento_ans": (
             "Apontamento da ANS\n"
             "A ANS apontou possível não disponibilização integral das informações da rede assistencial no portal "
-            "corporativo da Operadora, nos termos estabelecidos pela regulamentação vigente.\n\n"
+            "corporativo da Operadora, nos termos da RN ANS nº 486/2022, art. 2º.\n\n"
             "Diagnóstico institucional\n"
-            "A Postal Saúde mantém base estruturada de gestão da rede assistencial e mecanismos formais para registro e "
-            "acompanhamento de suas alterações.\n"
             "Considerando a elevada dinâmica de movimentação da rede, o principal ponto de atenção consiste em assegurar "
-            "que as informações constantes das bases operacionais estejam refletidas, de forma tempestiva e consistente, "
-            "nos mecanismos de disponibilização ao beneficiário.\n"
-            "A Operadora vem, portanto, fortalecendo a integração entre os processos de gestão da rede, os sistemas "
-            "corporativos e os canais de disponibilização das informações."
+            "que as informações constantes das bases operacionais estejam refletidas tempestivamente nos canais de "
+            "disponibilização ao beneficiário."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
             "• Gestão centralizada das movimentações da rede pela GERED.\n"
-            "• Monitoramento da composição e vulnerabilidade da rede.\n"
-            "• Aplicação dos normativos internos de cadastro, credenciamento, descredenciamento e higienização.\n"
-            "• Aprimoramento dos controles sistêmicos e automatizados.\n"
-            "• Fortalecimento da rastreabilidade das alterações cadastrais e contratuais.\n"
-            "• Revisão contínua dos fluxos operacionais relacionados à atualização das informações."
+            "• Aprimoramento dos controles sistêmicos e automatizados (chamados GLPI nº 30182 e nº 30999).\n"
+            "• Fortalecimento da rastreabilidade das alterações cadastrais e contratuais no Guia de Saúde."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "A consistência das informações da rede é tratada como componente da governança assistencial.\n"
-            "As movimentações são acompanhadas pelas áreas responsáveis e confrontadas com os instrumentos gerenciais "
-            "disponíveis, permitindo a identificação de alterações que demandem atualização e tratamento.\n"
-            "O processo permanece submetido a ciclo contínuo de monitoramento e aperfeiçoamento, com foco na integração "
-            "das informações e na redução de eventuais divergências entre as bases internas e os canais de disponibilização ao beneficiário."
+            "A consistência das informações da rede permanece submetida a ciclo contínuo de monitoramento e aperfeiçoamento "
+            "para redução de eventuais divergências entre as bases internas e o portal corporativo."
         ),
         "historico_planilha": {
             "Status 08/2026": (
-                "GERED/CODER: Painel de análise de vulnerabilidade em processo de revisão.\n"
-                "GERED/COCAP: Em desenvolvimento painel de controle gerencial (dashboard) para sistematizar a gestão centralizada das movimentações da rede, aplicação dos normativos internos e fortalecimento da rastreabilidade das alterações cadastrais."
+                "GERED/CODER: Revisão do painel de vulnerabilidade.\n"
+                "GERED/COCAP: Desenvolvimento de painel de controle gerencial (dashboard) para sistematizar a gestão centralizada das movimentações da rede e rastreabilidade das alterações cadastrais."
             ),
             "Status 09/2026": (
-                "GERED/CODER e GERED/COCAP: Continuidade da revisão do painel de vulnerabilidade e desenvolvimento do painel de controle gerencial das movimentações e atualizações da rede."
+                "GERED/CODER e GERED/COCAP: Continuidade da revisão do painel de vulnerabilidade e evolução do módulo de gerenciamento de inconsistências do portal."
             ),
-            "Status 10/2026": (
-                "GERED/CODER: Demanda formalizada em 08/10/2026 junto à TI para institucionalização do painel de vulnerabilidade."
-            ),
+            "Status 10/2026": TXT_CODER_OUT_26,
             "Complemento ANS 26/10": (
-                "GERED/CODER — Subitem: Vulnerabilidade de Rede\n"
-                "Painel de análise de vulnerabilidade em revisão metodológica, com demanda formalizada em 08/10/2026 junto à TI.\n\n"
+                f"Subitem: Vulnerabilidade de Rede\n{TXT_CODER_OUT_26}\n\n"
                 "GERED/COCAP — Subitem: Rede credenciada no portal: RN 486/2022, art. 2º\n"
-                "A Postal Saúde vem adotando medidas para aprimorar os mecanismos de controle, atualização e transparência das informações disponibilizadas no Guia de Saúde, em atendimento aos requisitos da RN ANS nº 486/2022. Nesse contexto, foram formalizados os chamados GLPI nº 30182 e nº 30999, contemplando o desenvolvimento de ferramentas para gerenciamento de inconsistências cadastrais, rastreabilidade das manifestações dos beneficiários e adequação das funcionalidades do portal. A primeira etapa do sistema de gerenciamento de reportes foi disponibilizada para homologação, enquanto o painel gerencial existente já permite o acompanhamento de demandas e prazos. Adicionalmente, foram realizadas análises documentais de conformidade e identificadas oportunidades de melhoria nas informações cadastrais dos prestadores e planos de saúde."
+                "A Postal Saúde vem adotando medidas para aprimorar os mecanismos de controle, atualização e transparência das informações disponibilizadas no Guia de Saúde, em atendimento aos requisitos da RN ANS nº 486/2022. Foram formalizados os chamados GLPI nº 30182 (1ª entrega do sistema de gerenciamento de reportes disponibilizada em homologação) e GLPI nº 30999 (adequação integral dos requisitos do art. 2º da RN 486/2022 no portal), acompanhados do painel gerencial, prints datados com URL e Checklist de Auditoria Documental do art. 2º."
             )
         }
     },
@@ -610,56 +425,38 @@ ITENS_PRASS_INICIAIS = [
         "apontamento_ans": (
             "Apontamento da ANS\n"
             "A ANS apontou possível não disponibilização de informações relativas à substituição de prestadores de serviços "
-            "de atenção à saúde não hospitalares, nos termos da regulamentação vigente.\n\n"
+            "de atenção à saúde não hospitalares, nos termos da RN ANS nº 567/2022, art. 11.\n\n"
             "Diagnóstico institucional\n"
             "A Postal Saúde possui processo formal de gestão das movimentações da rede, contemplando credenciamento, "
-            "descredenciamento, recontratualização, substituição, suspensão e reorganização.\n"
-            "No período analisado, foram registrados 580 descredenciamentos, sendo 104 relacionados ao interesse da "
-            "Operadora, incluindo situações de substituição ou redução da rede.\n"
-            "A Operadora também mantém mecanismos de análise de vulnerabilidade para avaliar os impactos assistenciais "
-            "decorrentes das movimentações da rede e subsidiar a adoção de medidas de recomposição, substituição ou expansão."
+            "descredenciamento, recontratualização, substituição, suspensão e reorganização, apoiado por análise de vulnerabilidade."
         ),
         "medidas_implementadas": (
             "Medidas implementadas e em implementação\n\n"
-            "• Aplicação da IOT 031, relativa ao descredenciamento de prestadores.\n"
-            "• Aplicação da IOT 036, relativa ao credenciamento de prestadores.\n"
-            "• Aplicação da IOT 035, relativa à recontratualização de prestadores.\n"
-            "• Aplicação da IOT 068, relativa à higienização da rede credenciada.\n"
-            "• Monitoramento da vulnerabilidade assistencial decorrente das movimentações da rede.\n"
-            "• Avaliação da necessidade de substituição ou expansão da rede.\n"
-            "• Fortalecimento dos mecanismos de rastreabilidade das movimentações.\n"
-            "• Revisão contínua dos processos relacionados à gestão e comunicação das alterações da rede."
+            "• Aplicação das IOTs 031, 035, 036 e 068.\n"
+            "• Avaliação da necessidade de substituição ou expansão da rede (CTI DIOPE/GERED 0020/2025).\n"
+            "• Fortalecimento da rastreabilidade das movimentações e adequação do portal (GLPI nº 30992 e GLPI nº 31012)."
         ),
         "observacoes": (
             "Tratamento e monitoramento\n\n"
-            "Os processos de descredenciamento e substituição são acompanhados pela GERED e avaliados quanto aos seus "
-            "potenciais impactos sobre a continuidade da assistência.\n"
-            "O Painel de Vulnerabilidade da Rede é utilizado como instrumento de apoio à identificação de riscos e à "
-            "tomada de decisão quanto à reorganização da rede.\n"
-            "As alterações são tratadas mediante os fluxos e normativos institucionais aplicáveis, com acompanhamento da "
-            "necessidade de manutenção ou recomposição da oferta assistencial.\n"
-            "O processo permanece submetido ao ciclo de melhoria contínua, com foco no fortalecimento da rastreabilidade "
-            "das substituições e na adequada disponibilização das informações aos beneficiários."
+            "Os processos de descredenciamento e substituição são acompanhados pela GERED e avaliados quanto aos impactos "
+            "sobre a continuidade da assistência e adequada disponibilização das informações aos beneficiários no portal."
         ),
         "historico_planilha": {
             "Status 08/2026": (
-                "GERED/CODER: Revisão do painel de análise de vulnerabilidade.\n"
-                "COCAP: Desenvolvimento de painel de controle gerencial para sistematizar a aplicação das IOTs 031, 036 e 068, avaliação de substituição e fortalecimento da rastreabilidade.\n"
-                "CONEC: Revisão contínua dos normativos da área."
+                "GERED/CODER: Revisão do painel de vulnerabilidade.\n"
+                "COCAP: Desenvolvimento de dashboard gerencial para sistematizar a aplicação das IOTs 031, 036 e 068 e rastreabilidade das substituições.\n"
+                "CONEC: Revisão normativa contínua."
             ),
             "Status 09/2026": (
-                "GERED/CODER, COCAP e CONEC: Manutenção das frentes de revisão do painel de vulnerabilidade, evolução do dashboard de controle de movimentações da rede e revisão normativa."
+                "GERED/CODER, COCAP e CONEC: Evolução do painel de controle de movimentações e substituições da rede e revisão normativa."
             ),
-            "Status 10/2026": (
-                "GERED/CODER: Demanda formalizada em 08/10/2026 junto à TI para institucionalização do painel de vulnerabilidade."
-            ),
+            "Status 10/2026": TXT_CODER_OUT_26,
             "Complemento ANS 26/10": (
-                "GERED/CODER — Subitem: Vulnerabilidade de Rede\n"
-                "Painel de análise de vulnerabilidade em reestruturação junto à TI (demanda de 08/10/2026).\n\n"
+                f"Subitem: Vulnerabilidade de Rede\n{TXT_CODER_OUT_26}\n\n"
                 "GERED/CONEC — Subitem: Atualização de normativos (MAN006 e IOT036)\n"
-                "O Manual MAN006 encontra-se em revisão na plataforma DocSpider e a IOT 036.07 foi atualizada em 14/08/2026.\n\n"
+                "Manual MAN006 em revisão na plataforma DocSpider e IOT 036.07 atualizada em 14/08/2026.\n\n"
                 "GERED/COCAP — Subitem: Registros de movimentação e substituição da rede / Substituição de rede não hospitalar: RN 567/2022, art. 11\n"
-                "A resposta da Postal Saúde ao Ofício nº 108/2026 da ANS consolida as iniciativas da operadora para adequar os processos de movimentação e substituição da rede assistencial às exigências regulatórias, em especial ao Art. 11 da RN nº 567/2022. No documento, a operadora comprova possuir normativos internos estruturados para a gestão da rede e apresenta evidências visuais atestando que a comunicação das substituições aos beneficiários já ocorre no portal dentro dos prazos legais. Visando aprimorar a transparência e a usabilidade do Guia de Saúde, foram formalizadas demandas tecnológicas (GLPI nº 30992, nº 31012 e nº 30182) para extração consolidada de substitutos no Benner, melhoria da busca isolada por prestadores substitutos e tratamento estruturado de inconsistências cadastrais, além de instrumento de análise de equivalência assistencial, CTI DIOPE/GERED 0020/2025 e checklist documental de conformidade."
+                "A resposta da Postal Saúde ao Ofício nº 108/2026 da ANS consolida as iniciativas para adequar os processos de movimentação e substituição da rede assistencial às exigências regulatórias, em especial ao Art. 11 da RN nº 567/2022. Foram formalizados os chamados GLPI nº 30992 (relatório consolidado de substitutos no Benner), GLPI nº 31012 (pesquisa isolada por prestador no portal) e GLPI nº 30182 (saneamento de inconsistências), além da apresentação das IOTs 031 e 036, prints comparativos Benner x Guia de Saúde, ferramenta de equivalência, CTI DIOPE/GERED 0020/2025 e Checklist de Conformidade do art. 11."
             )
         }
     },
@@ -669,68 +466,30 @@ ITENS_PRASS_INICIAIS = [
         "areas_atribuidas": ["CODER", "CONEC"],
         "apontamento_ans": (
             "Apontamento da ANS\n"
-            "A ANS apontou a existência de indícios de insuficiência de rede prestadora para garantir o cumprimento dos "
-            "prazos máximos de atendimento estabelecidos pela RN ANS nº 566/2022, com reflexos na garantia de acesso dos "
-            "beneficiários aos serviços e procedimentos de cobertura obrigatória. A análise apresentada pela Agência "
-            "registra, ainda, relatos de dificuldade de acesso decorrentes de indisponibilidade ou insuficiência de "
-            "prestadores, inclusive situações relacionadas à suspensão de atendimentos e à necessidade de utilização de "
-            "alternativas assistenciais.\n\n"
+            "A ANS apontou indícios de insuficiência de rede prestadora para garantir o cumprimento dos prazos máximos de "
+            "atendimento estabelecidos pela RN ANS nº 566/2022.\n\n"
             "Diagnóstico Institucional\n"
-            "A Postal Saúde reconhece que, no período analisado pela ANS, foram identificadas situações pontuais de "
-            "indisponibilidade, insuficiência ou inadequação da rede prestadora, especialmente em determinadas localidades, "
-            "especialidades e serviços assistenciais, com potencial impacto sobre o cumprimento tempestivo dos prazos regulamentares.\n"
-            "A análise interna também evidenciou que o risco relacionado à rede não deve ser tratado exclusivamente sob a "
-            "perspectiva quantitativa de prestadores credenciados, mas considerando sua capacidade assistencial efetiva, "
-            "disponibilidade para o serviço demandado, especialidade, município, abrangência territorial, modalidade de "
-            "atendimento e efetiva capacidade de agendamento dentro do prazo regulamentar.\n"
-            "Nesse sentido, a Postal Saúde passou a fortalecer o acompanhamento da vulnerabilidade da rede e a integração "
-            "entre os mecanismos de monitoramento da Garantia de Atendimento e a gestão da rede credenciada."
+            "A Postal Saúde fortaleceu o acompanhamento da vulnerabilidade da rede considerando sua capacidade assistencial "
+            "efetiva, disponibilidade por especialidade e município e integração entre o monitoramento da Garantia de "
+            "Atendimento e a gestão da rede credenciada."
         ),
         "medidas_implementadas": (
             "Medidas Implementadas e em Implementação\n\n"
-            "A Postal Saúde implementou e vem aprimorando conjunto integrado de medidas destinado à prevenção, "
-            "identificação tempestiva e tratamento das situações de insuficiência de rede, destacando-se:\n"
-            "• Monitoramento diário da Garantia de Atendimento, mediante painel gerencial em BI, com acompanhamento das "
-            "demandas recepcionadas, situação dos atendimentos e prazos regulatórios.\n"
-            "• Monitoramento da vulnerabilidade da rede credenciada, permitindo identificar localidades e especialidades "
-            "com maior exposição a risco assistencial.\n"
-            "• Acompanhamento direcionado das unidades regionais com maior incidência de demandas de Garantia de Atendimento.\n"
-            "• Emissão e encaminhamento de relatórios analíticos às Regionais, subsidiando a atuação dos gestores locais e "
-            "a adoção de medidas corretivas.\n"
-            "• Acompanhamento individualizado das demandas críticas e reincidentes, com priorização das situações com "
-            "maior risco de extrapolação de prazo.\n"
-            "• Utilização de Contratação Direta, Reembolso Integral e Tratamento Fora do Domicílio, quando configuradas as "
-            "hipóteses aplicáveis e necessárias à garantia do atendimento.\n"
-            "• Padronização dos fluxos operacionais por meio do Manual da Garantia de Atendimento e dos procedimentos "
-            "operacionais associados.\n"
-            "• Automação e melhoria dos formulários e fluxos eletrônicos, inclusive mediante migração para o E-doc, com "
-            "objetivo de ampliar rastreabilidade, padronização e controle."
+            "• Monitoramento diário da Garantia de Atendimento mediante painel gerencial em BI.\n"
+            "• Monitoramento da vulnerabilidade da rede credenciada e emissão de relatórios analíticos às Regionais.\n"
+            "• Utilização de Contratação Direta, Reembolso Integral e Tratamento Fora do Domicílio.\n"
+            "• Padronização dos fluxos operacionais por meio do Manual da Garantia de Atendimento e migração para o E-doc."
         ),
         "observacoes": (
             "Tratamento e Monitoramento\n\n"
-            "O tratamento do risco de insuficiência de rede passou a ser conduzido sob perspectiva preventiva e contínua, "
-            "mediante integração entre monitoramento da demanda, análise da capacidade assistencial da rede e atuação regional.\n"
-            "O acompanhamento diário permite identificar demandas próximas do vencimento dos prazos regulamentares e "
-            "direcionar tempestivamente a atuação das áreas responsáveis.\n"
-            "Paralelamente, a análise de vulnerabilidade da rede possibilita a identificação de cenários que possam "
-            "comprometer a capacidade de atendimento, permitindo adoção antecipada de medidas de mitigação.\n"
-            "A GERED/CODER mantém, ainda, rotina de alinhamento com as Regionais, orientação operacional e "
-            "disponibilização de ferramentas de BI para consulta da rede, beneficiários, eventos e demandas de Garantia de Atendimento.\n"
-            "O monitoramento também contempla a classificação adequada dos protocolos, especialmente após a alteração "
-            "processual implementada em outubro de 2025, de modo a evitar que demandas efetivamente caracterizadas como "
-            "Garantia de Atendimento permaneçam indevidamente classificadas como Rede Credenciada."
+            "O tratamento do risco de insuficiência de rede é conduzido de forma preventiva e contínua, integrando "
+            "monitoramento diário da demanda, análise da capacidade assistencial da rede e atuação junto às Regionais."
         ),
         "historico_planilha": {
-            "Status 08/2026": (
-                "GERED: As informações deste item estão contempladas no item 8.1.2 no que se refere ao monitoramento diário das UAR/NAR com maior incidência em processos de Garantia de Atendimento fora do prazo."
-            ),
-            "Status 09/2026": (
-                "GERED: Monitoramento diário das UAR/NAR conduzido de forma integrada ao item 8.1.2, registrando queda de -15,91% no volume de processos de Garantia de Atendimento em setembro/2026."
-            ),
-            "Status 10/2026": (
-                "GERED/CODER: Implementada em 01/10/2026 a obrigatoriedade de o beneficiário informar o número do protocolo de atendimento ao solicitar Reembolso Integral no aplicativo, fortalecendo a rastreabilidade dos processos de Garantia de Atendimento."
-            ),
-            "Complemento ANS 26/10": ""
+            "Status 08/2026": "GERED: As informações deste item estão contempladas no item 8.1.2 no que se refere ao monitoramento diário das UAR/NAR com maior incidência em processos de GA fora do prazo.",
+            "Status 09/2026": "GERED: Monitoramento diário das UAR/NAR conduzido de forma integrada ao item 8.1.2, registrando redução de -15,91% nos processos de Garantia de Atendimento em setembro/2026.",
+            "Status 10/2026": "GERED/CODER: Implementada em 01/10/2026 a obrigatoriedade do protocolo de atendimento no aplicativo ao solicitar Reembolso Integral oriundo de Garantia de Atendimento.",
+            "Complemento ANS 26/10": "N/A"
         }
     }
 ]
@@ -740,7 +499,7 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
         "CODER": [
             {
                 "titulo": "Demandas de Garantia de Atendimento geradas por essas suspensões e sua solução",
-                "analise": "Foram adotadas medidas imediatas pela GERED/CODER para assegurar a continuidade da assistência aos beneficiários impactados por suspensões contratuais, mediante direcionamento assistencial para prestadores aptos da rede direta/indireta, contratação direta ou liberação de reembolso integral nos prazos da RN nº 566/2022."
+                "analise": "Adotadas medidas imediatas pela GERED/CODER para assegurar a continuidade da assistência aos beneficiários impactados por suspensões contratuais, mediante direcionamento assistencial para prestadores aptos da rede direta/indireta, contratação direta ou liberação de reembolso integral nos prazos da RN nº 566/2022."
             },
             {
                 "titulo": "Controle mensal de prestadores suspensos e restabelecidos (indicadores do PRASS)",
@@ -750,7 +509,7 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
         "CONEC": [
             {
                 "titulo": "Relação dos prestadores que suspenderam ou ameaçaram suspender por inadimplência: prestador, UF, data, valor em aberto e situação",
-                "analise": "Levantamento estruturado contendo a identificação dos prestadores com notificação ou registro de suspensão por inadimplência, unidade federativa, data da ocorrência e status atual das tratativas."
+                "analise": "Levantamento estruturado contendo a identificação dos prestadores com notificação ou registro de suspensão por inadimplência, UF, data da ocorrência e status atual das tratativas."
             },
             {
                 "titulo": "Registros de negociação: e-mails, ofícios, notificações recebidas e atas de reunião com prestadores",
@@ -770,11 +529,11 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
         "COCAP": [
             {
                 "titulo": "Extração da base de rede com data de corte, por tipo, UF e especialidade, conciliada com o portal",
-                "analise": "Disponibilizadas extrações cadastrais completas da rede de prestadores de serviços de saúde extraídas do sistema corporativo BENNER (.CSV com 12.360 e 12.403 registros), contemplando CPF/CNPJ, razão social, nome fantasia, categoria, tipo de prestador, datas de credenciamento/inclusão, endereço com IBGE/UF/CEP e especialidades."
+                "analise": "Disponibilizadas extrações cadastrais completas da rede de prestadores extraídas do sistema BENNER (.CSV com 12.360 e 12.403 registros), contemplando CPF/CNPJ, razão social, categoria, tipo de prestador, datas de credenciamento/inclusão, endereço com IBGE/UF/CEP e especialidades."
             },
             {
                 "titulo": "Relatório de alterações cadastrais do mês: inclusões, alterações e exclusões, com data e responsável",
-                "analise": "Formalizada solicitação de extração junto à área técnica responsável por meio do chamado GLPI nº 31043 (COIDE > Dados Gerenciais), abrangendo os registros de inclusão, alteração e exclusão de prestadores realizados em agosto e setembro de 2026, com data, usuário responsável e valores anteriores/posteriores."
+                "analise": "Formalizada solicitação de extração junto à área técnica responsável por meio do chamado GLPI nº 31043 (COIDE > Dados Gerenciais), abrangendo os registros de inclusão, alteração e exclusão de prestadores realizados em agosto e setembro de 2026, com data e usuário responsável."
             },
             {
                 "titulo": "Registros da rotina da GERED: checklist e amostra de validações",
@@ -782,17 +541,17 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
             },
             {
                 "titulo": "Relatório de higienização da rede (IOT 068) do período",
-                "analise": "Apresentado o procedimento de extração do relatório POSTAL 988 (Comprovante de Atendimento do Prestador no Período de 12 Meses) no sistema BENNER, exemplificado com amostra referente ao prestador Instituição Adventista Centro Oeste de Promoção à Saúde (CNPJ 24.823.958/0002-21), período de 27/10/2025 a 27/10/2026, em cumprimento à IOT 068."
+                "analise": "Apresentado o procedimento de extração do relatório POSTAL 988 (Comprovante de Atendimento do Prestador no Período de 12 Meses) no sistema BENNER, em cumprimento à IOT 068."
             },
             {
                 "titulo": "IOT 031, 068, 075, 158 e 224 revisadas ou cronograma formal de revisão",
-                "analise": "Apresentadas na íntegra as Instruções Operacionais de Trabalho vigentes: IOT 075.02 (Suspensão de Atendimento - 8 págs.), IOT 031.07 (Descredenciamento de Prestadores - 12 págs.) e IOT 068.04 (Higienização da Rede Credenciada - 9 págs.), acompanhadas da avaliação de revisão normativa junto às IOTs 158 e 224."
+                "analise": "Apresentadas na íntegra as Instruções Operacionais de Trabalho vigentes: IOT 075.02 (Suspensão de Atendimento), IOT 031.07 (Descredenciamento de Prestadores) e IOT 068.04 (Higienização da Rede Credenciada), acompanhadas do cronograma de revisão normativa."
             }
         ],
         "CODER": [
             {
                 "titulo": "Revisão metodológica e reestruturação do Painel de Vulnerabilidade da Rede Prestadora",
-                "analise": "Formalizada em 08/10/2026 demanda junto à área de Tecnologia da Informação para desenvolvimento e institucionalização do painel de vulnerabilidade, fortalecendo a rastreabilidade das bases utilizadas."
+                "analise": "Formalizada em 08/10/2026 demanda junto à TI para desenvolvimento e institucionalização do painel de vulnerabilidade, fortalecendo a rastreabilidade das bases utilizadas."
             }
         ],
         "CONEC": [
@@ -806,7 +565,7 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
         "COCAP": [
             {
                 "titulo": "Relatório das notificações 'Encontrou inconsistência?' do portal e prazo de correção",
-                "analise": "Formalizada demanda tecnológica sob o chamado GLPI nº 30182 (COSIS > Projetos). A 1ª Entrega (Registro e Atendimento de Reportes do Guia Saúde) foi disponibilizada em ambiente de homologação em 21/10/2026, contemplando geração de protocolo, envio de e-mail automático com prazo de 5 dias úteis, painel administrativo com acesso AD e filtros por Status/Ano/Mês/Tipo/UF, além do Manual Operacional."
+                "analise": "Formalizada demanda tecnológica sob o chamado GLPI nº 30182 (COSIS > Projetos). A 1ª Entrega (Registro e Atendimento de Reportes do Guia Saúde) foi disponibilizada em homologação em 21/10/2026, com geração de protocolo, e-mail automático com prazo de 5 dias úteis e painel administrativo."
             },
             {
                 "titulo": "Cronograma do novo painel de controle e prints da versão atual",
@@ -814,11 +573,11 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
             },
             {
                 "titulo": "Bloco C1 (RN 486/2022, art. 2º) - Cronograma de Implantação",
-                "analise": "Formalizada solicitação de adequação do Guia de Saúde aos requisitos do art. 2º da RN ANS nº 486/2022 por meio do chamado GLPI nº 30999 (COSIS > Minha Postal), contemplando a exibição individualizada de todos os planos atendidos por prestador e revisão dos mecanismos de busca."
+                "analise": "Formalizada solicitação de adequação do Guia de Saúde aos requisitos do art. 2º da RN ANS nº 486/2022 por meio do chamado GLPI nº 30999 (COSIS > Minha Postal)."
             },
             {
                 "titulo": "Bloco C1 (RN 486/2022, art. 2º) - Demanda de TI aberta (número e data) e especificação aprovada",
-                "analise": "Comprovada a abertura do chamado GLPI nº 30999 em 26/10/2026 com a especificação detalhada de todos os requisitos do art. 2º, incisos I e II e alínea 'g', da RN ANS nº 486/2022."
+                "analise": "Comprovada a abertura do chamado GLPI nº 30999 em 26/10/2026 com a especificação detalhada de todos os requisitos do art. 2º da RN ANS nº 486/2022."
             },
             {
                 "titulo": "Bloco C1 (RN 486/2022, art. 2º) - Homologação e data de entrada em produção",
@@ -826,11 +585,11 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
             },
             {
                 "titulo": "Bloco C1 (RN 486/2022, art. 2º) - Prints datados com URL, antes e depois, em ao menos três tipos de prestador",
-                "analise": "Apresentados registros visuais datados (27/10/2026, às 10h28) com URL visível do Guia de Saúde (guiasaude.postalsaude.com.br), demonstrando a exibição cadastral de diferentes estabelecimentos (clínicas médicas e centros de diagnóstico) e o mecanismo de reporte de inconsistências."
+                "analise": "Apresentados registros visuais datados com URL visível do Guia de Saúde (guiasaude.postalsaude.com.br), demonstrando a exibição cadastral de diferentes estabelecimentos e o mecanismo de reporte de inconsistências."
             },
             {
                 "titulo": "Bloco C1 (RN 486/2022, art. 2º) - Checklist de conformidade do art. 2º assinado pela área",
-                "analise": "Elaborado Checklist de Auditoria Documental do Art. 2º da RN 486/2022 (5 páginas), avaliando item a item (I-a a I-d, II-a a II-g e § 1º) com telas comprobatórias e vinculação ao chamado GLPI nº 30999."
+                "analise": "Elaborado Checklist de Auditoria Documental do Art. 2º da RN 486/2022 (5 páginas), avaliando item a item com telas comprobatórias e vinculação ao chamado GLPI nº 30999."
             }
         ]
     },
@@ -838,19 +597,19 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
         "COCAP": [
             {
                 "titulo": "Bloco B6 - Relação do período: prestador, CNPJ, data, motivo, substituto e data de publicação no portal",
-                "analise": "Formalizada solicitação de extração consolidada no sistema BENNER por meio do chamado GLPI nº 30992 (aberto em 26/10/2026 na fila COSIS > Benner - Saúde > Relatórios), com envio da planilha base de descredenciados de agosto e setembro/2026 para retorno estruturado de todos os campos de substituição e datas de publicação."
+                "analise": "Formalizada solicitação de extração consolidada no sistema BENNER por meio do chamado GLPI nº 30992 (aberto em 26/10/2026 na fila COSIS > Benner - Saúde > Relatórios), com envio da planilha base de descredenciados de agosto e setembro/2026."
             },
             {
                 "titulo": "Bloco B6 - Amostra de processos completos (IOT 031 e 036): solicitação, parecer, aprovação e aditivo ou distrato",
-                "analise": "Apresentado compilado normativo de 59 páginas contendo a íntegra da IOT 031.07 (Descredenciamento de Prestadores - págs. 1 a 12) e da IOT 036.07 (Credenciamento de Prestador - págs. 13 a 59), incluindo os formulários FOP 056 e FOP 075."
+                "analise": "Apresentado compilado normativo de 59 páginas contendo a íntegra da IOT 031.07 (Descredenciamento de Prestadores) e da IOT 036.07 (Credenciamento de Prestador), incluindo os formulários FOP 056 e FOP 075."
             },
             {
                 "titulo": "Bloco B6 - Prova da comunicação ao beneficiário: print datado e data de publicação",
-                "analise": "Apresentada evidência comparativa contendo: (1) Captura da consulta pública de substituição no Guia de Saúde (Clínica Bella Vita / Corpus Clean) e (2) Captura da tela cadastral no sistema BENNER comprovando o registro do período de publicação no portal (Início: 01/06/2026 e Fim: 28/11/2026)."
+                "analise": "Apresentada evidência comparativa contendo a captura da consulta pública de substituição no Guia de Saúde e a tela cadastral no sistema BENNER comprovando o registro do período de publicação no portal."
             },
             {
                 "titulo": "Bloco B6 - Indicador do PRASS: percentual de substituições comunicadas no prazo",
-                "analise": "Vinculado ao levantamento primário solicitado no chamado GLPI nº 30992 junto à equipe do sistema BENNER para apuração auditável do numerador e denominador das substituições comunicadas no prazo regulatório."
+                "analise": "Vinculado ao levantamento primário solicitado no chamado GLPI nº 30992 junto à equipe do sistema BENNER para apuração auditável das substituições comunicadas no prazo regulatório."
             },
             {
                 "titulo": "Bloco B6 - Análise de equivalência do substituto (mesmo serviço e município)",
@@ -858,27 +617,27 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
             },
             {
                 "titulo": "Bloco B6 - Termos aditivos de habilitação e CTI DIOPE/GERED 0020/2025, prometidos no PRASS",
-                "analise": "Apresentada a íntegra da Comunicação Interna CTI DIOPE/GERED nº 0020/2025 (NUP 00000.020940/2025-81), de 03/07/2025, assinada digitalmente por João Victor Peres Moura (código verificador 73F10830), determinando às regionais o mapeamento de hospitais substitutos em observância à RN 566/2022 e ao MAN 015."
+                "analise": "Apresentada a íntegra da Comunicação Interna CTI DIOPE/GERED nº 0020/2025 (NUP 00000.020940/2025-81), assinada digitalmente por João Victor Peres Moura, determinando às regionais o mapeamento de hospitais substitutos."
             },
             {
                 "titulo": "Bloco C2 (RN 567/2022, art. 11) - Cronograma de Implantação",
-                "analise": "Formalizada demanda evolutiva junto à TI por meio do chamado GLPI nº 31012 (aberto em 27/10/2026 na fila COSIS > Intranet / Site), solicitando a implementação da pesquisa isolada por prestador na página de substituições (art. 11, inciso II, da RN 567/2022) e respectivo cronograma."
+                "analise": "Formalizada demanda evolutiva junto à TI por meio do chamado GLPI nº 31012 (COSIS > Intranet / Site), solicitando a implementação da pesquisa isolada por prestador na página de substituições."
             },
             {
                 "titulo": "Bloco C2 (RN 567/2022, art. 11) - Demanda de TI, especificação e homologação",
-                "analise": "Comprovado o registro do chamado GLPI nº 31012 contendo a especificação funcional detalhada para adequação da busca isolada e combinada de substituições no portal conforme o art. 11, inciso II, da RN 567/2022 c/c a RN 486/2022."
+                "analise": "Comprovado o registro do chamado GLPI nº 31012 contendo a especificação funcional detalhada para adequação da busca isolada e combinada de substituições no portal conforme o art. 11, inciso II, da RN 567/2022."
             },
             {
                 "titulo": "Bloco C2 (RN 567/2022, art. 11) - Prints datados com URL, antes e depois, de ao menos três substituições",
-                "analise": "Apresentado caderno comprobatório da CODER/GERED (5 páginas, datado de 27/10/2026) com capturas das telas de substituição para 3 prestadores distintos: 1) CR Serviços de Saúde Ltda (SC); 2) Hospital da Criança Urgil Urgência Infantil (AC); e 3) Ortoclínica de Sergipe Ltda (SE), abrangendo os planos CorreioSaúde, CorreioSaúde II e Viver Saúde."
+                "analise": "Apresentado caderno comprobatório da CODER/GERED (5 páginas) com capturas das telas de substituição para 3 prestadores distintos (CR Serviços de Saúde Ltda - SC; Hospital da Criança Urgil - AC; e Ortoclínica de Sergipe Ltda - SE)."
             },
             {
                 "titulo": "Bloco C2 (RN 567/2022, art. 11) - Saneamento dos cadastros com erro (datas e telefones) e relatório da correção",
-                "analise": "Apresentado o fluxo estruturado de tratamento e saneamento de inconsistências cadastrais do Guia de Saúde disponibilizado em homologação por meio do chamado GLPI nº 30182, aliado à conferência cadastral direta no sistema BENNER."
+                "analise": "Apresentado o fluxo estruturado de tratamento e saneamento de inconsistências cadastrais do Guia de Saúde disponibilizado em homologação por meio do chamado GLPI nº 30182, aliado à conferência no sistema BENNER."
             },
             {
                 "titulo": "Bloco C2 (RN 567/2022, art. 11) - Checklist de conformidade do art. 11 assinado",
-                "analise": "Elaborado documento de verificação de conformidade do art. 11 da RN 567/2022 (2 páginas), demonstrando por capturas de tela o atendimento às alíneas 'a', 'b', 'c' e 'd' do inciso I e o acompanhamento da busca isolada do inciso II via GLPI nº 31012."
+                "analise": "Elaborado documento de verificação de conformidade do art. 11 da RN 567/2022 (2 páginas), demonstrando o atendimento às alíneas 'a', 'b', 'c' e 'd' do inciso I e o acompanhamento da busca isolada do inciso II via GLPI nº 31012."
             }
         ]
     }
@@ -886,10 +645,9 @@ CHECKLISTS_INICIAIS_COMPLEMENTO = {
 
 
 # ==============================================================================
-# CAMADA DE BANCO DE DADOS COM AUTO-FALLBACK E MIGRAÇÃO TRANSPARENTE
+# CAMADA DE BANCO DE DADOS COM AUTO-FALLBACK E MIGRAÇÃO AUTOMÁTICA
 # ==============================================================================
 def obter_url_postgres():
-    """Busca a URL do PostgreSQL priorizando DATABASE_PUBLIC_URL para evitar falha IPv6 no railway.internal."""
     for nome_var in ("DATABASE_PUBLIC_URL", "DATABASE_URL", "POSTGRES_PUBLIC_URL", "POSTGRES_URL", "POSTGRESQL_URL"):
         val = os.environ.get(nome_var, "").strip()
         if val and not val.startswith("${{") and (val.startswith("postgres://") or val.startswith("postgresql://")):
@@ -1157,7 +915,7 @@ def garantir_banco_inicializado():
 
 
 # ==============================================================================
-# FUNÇÕES AUXILIARES DE ANÁLISE DE ANEXOS E GERAÇÃO DE PDF / WORD
+# FUNÇÕES AUXILIARES DE ANÁLISE DE ANEXOS, OFÍCIO, PDF E EXPORTAÇÃO EXCEL
 # ==============================================================================
 def extrair_resumo_arquivo(nome_arquivo, raw_bytes):
     ext = os.path.splitext(nome_arquivo.lower())[1]
@@ -1241,10 +999,6 @@ def calcular_semaforo_setores(demanda_id, areas_atribuidas):
 
 
 def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anexos):
-    """
-    Monta o Ofício colocando PRIMEIRO o texto da Caixinha de Resumo (Seção 1)
-    e DEPOIS a Análise Técnica de todas as evidências e anexos (Seção 2).
-    """
     data_str = datetime.now().strftime("%d/%m/%Y")
     resumo_caixinha = (demanda_row.get("resumo_texto") or "").strip()
     hist = json.loads(item_row.get("historico_json") or "{}")
@@ -1340,10 +1094,6 @@ def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anex
 
 
 def atualizar_bloco_resumo_no_oficio_salvo(texto_oficio_salvo, novo_resumo):
-    """
-    Caso o analista já tenha uma versão salva do Ofício e altere apenas a Caixinha de Resumo,
-    atualiza somente o texto da Seção 1 sem perder nenhuma edição manual feita na Seção 2!
-    """
     novo_resumo = (novo_resumo or "").strip()
     if not novo_resumo or not texto_oficio_salvo:
         return texto_oficio_salvo
@@ -1364,6 +1114,29 @@ def atualizar_bloco_resumo_no_oficio_salvo(texto_oficio_salvo, novo_resumo):
             + texto_oficio_salvo[pos_2:]
         )
     return texto_oficio_salvo
+
+
+def montar_celula_competencia_planilha(dem_row, chks_demanda, texto_hist_original):
+    resumo = (dem_row.get("resumo_texto") or "").strip() if dem_row else ""
+    partes = []
+    if resumo:
+        partes.append(resumo)
+    elif texto_hist_original and texto_hist_original not in ("Preencher", "Prencher"):
+        partes.append(texto_hist_original)
+
+    if chks_demanda:
+        linhas_chk = ["", "[EVIDÊNCIAS E CHECKLIST NO SISTEMA]:"]
+        for c in chks_demanda:
+            st = "CONCLUÍDO" if bool(c.get("concluido")) else "PENDENTE"
+            arqs = [a["nome_arquivo"] for a in c.get("anexos", [])]
+            str_arqs = f" | Anexo(s): {', '.join(arqs)}" if arqs else ""
+            linhas_chk.append(f"• [{c['setor']} - {st}] {c['titulo']}{str_arqs}")
+            if (c.get("analise_evidencia") or "").strip():
+                linhas_chk.append(f"  Análise: {c['analise_evidencia'].strip()}")
+        partes.append("\n".join(linhas_chk))
+
+    texto_final = "\n".join(partes).strip()
+    return texto_final if texto_final else "Preencher"
 
 
 def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivos_excel, lista_pdfs_anexados):
@@ -1545,6 +1318,155 @@ def api_bootstrap():
         return jsonify({"erro": str(e)}), 500
 
 
+@app.route("/api/exportar-planilha", methods=["GET"])
+def api_exportar_planilha():
+    """
+    Exporta todos os dados preenchidos no sistema exatamente no formato e layout
+    da planilha 'PRASS - Projeto - base inicial.xlsx' (com aba principal + aba de checklists).
+    """
+    itens = db_query("SELECT * FROM prass_items ORDER BY codigo")
+    todas_demandas = db_query("SELECT * FROM demandas ORDER BY ordem ASC, id ASC")
+    todos_chks = db_query("SELECT * FROM checklist_evidencias ORDER BY id ASC")
+    todos_anexos = db_query("SELECT id, checklist_id, nome_arquivo FROM anexos ORDER BY id ASC")
+
+    anexos_por_chk = {}
+    for a in todos_anexos:
+        anexos_por_chk.setdefault(a["checklist_id"], []).append(a)
+
+    chks_por_dem = {}
+    for c in todos_chks:
+        c["anexos"] = anexos_por_chk.get(c["id"], [])
+        chks_por_dem.setdefault(c["demanda_id"], []).append(c)
+
+    dems_por_item = {}
+    nomes_avulsas = []
+    for d in todas_demandas:
+        dems_por_item.setdefault(d["item_codigo"], {})[d["nome"]] = d
+        if d["tipo"] == "AVULSA" and d["nome"] not in DEMANDAS_FIXAS_PADRAO and d["nome"] not in nomes_avulsas:
+            nomes_avulsas.append(d["nome"])
+
+    colunas_competencias = DEMANDAS_FIXAS_PADRAO + nomes_avulsas
+    cabecalhos = ["Título", "Descrição / Diagnóstico / Medidas Implementadas", "Observações"] + colunas_competencias
+
+    if HAS_OPENPYXL:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "PRASS - Projeto"
+
+        fill_header = PatternFill(start_color="003366", end_color="003366", fill_type="solid")
+        fill_comp = PatternFill(start_color="F2A900", end_color="F2A900", fill_type="solid")
+        font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        font_comp = Font(name="Calibri", size=11, bold=True, color="001F3F")
+        font_titulo = Font(name="Calibri", size=10, bold=True, color="003366")
+        font_corpo = Font(name="Calibri", size=10, color="1E293B")
+        borda_fina = Border(
+            left=Side(style="thin", color="CBD5E1"),
+            right=Side(style="thin", color="CBD5E1"),
+            top=Side(style="thin", color="CBD5E1"),
+            bottom=Side(style="thin", color="CBD5E1")
+        )
+        alinhamento_topo = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        alinhamento_header = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        ws.append(cabecalhos)
+        ws.row_dimensions[1].height = 30
+        for col_idx, nome_col in enumerate(cabecalhos, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            if nome_col == "Complemento ANS 26/10":
+                cell.fill = fill_comp
+                cell.font = font_comp
+            else:
+                cell.fill = fill_header
+                cell.font = font_header
+            cell.alignment = alinhamento_header
+            cell.border = borda_fina
+            letra = get_column_letter(col_idx)
+            ws.column_dimensions[letra].width = 36 if col_idx == 1 else (52 if col_idx in (2, 3) else 45)
+
+        for row_idx, it in enumerate(itens, start=2):
+            cod = it["codigo"]
+            hist = json.loads(it.get("historico_json") or "{}")
+            col_b_completa = f"{it['apontamento_ans']}\n\n{it['medidas_implementadas']}".strip()
+            linha_vals = [it["titulo"], col_b_completa, it["observacoes"]]
+
+            mapa_dems = dems_por_item.get(cod, {})
+            for nome_c in colunas_competencias:
+                d_row = mapa_dems.get(nome_c)
+                lista_c = chks_por_dem.get(d_row["id"], []) if d_row else []
+                txt_celula = montar_celula_competencia_planilha(d_row, lista_c, hist.get(nome_c, ""))
+                linha_vals.append(txt_celula)
+
+            ws.append(linha_vals)
+            ws.row_dimensions[row_idx].height = 180
+            for c_i in range(1, len(linha_vals) + 1):
+                c_cell = ws.cell(row=row_idx, column=c_i)
+                c_cell.font = font_titulo if c_i == 1 else font_corpo
+                c_cell.alignment = alinhamento_topo
+                c_cell.border = borda_fina
+
+        # Segunda Aba: Detalhamento Auditável de Checklists e Anexos
+        ws2 = wb.create_sheet(title="Checklists e Evidências GERED")
+        cab2 = ["Item PRASS", "Demanda / Competência", "Tipo", "Coordenação", "Evidência / Item do Checklist", "Status", "Análise Técnica Registrada", "Arquivos Anexados"]
+        ws2.append(cab2)
+        ws2.row_dimensions[1].height = 26
+        for c_i, _ in enumerate(cab2, start=1):
+            c_cell = ws2.cell(row=1, column=c_i)
+            c_cell.fill = fill_header
+            c_cell.font = font_header
+            c_cell.alignment = alinhamento_header
+            ws2.column_dimensions[get_column_letter(c_i)].width = 28 if c_i not in (5, 7) else 48
+
+        for d in todas_demandas:
+            for c in chks_por_dem.get(d["id"], []):
+                nomes_a = ", ".join(x["nome_arquivo"] for x in c.get("anexos", []))
+                ws2.append([
+                    d["item_codigo"],
+                    d["nome"],
+                    d["tipo"],
+                    c["setor"],
+                    c["titulo"],
+                    "Concluído" if bool(c["concluido"]) else "Pendente",
+                    c.get("analise_evidencia", ""),
+                    nomes_a or "(Sem anexo)"
+                ])
+
+        out = io.BytesIO()
+        wb.save(out)
+        out.seek(0)
+        nome_arq = f"PRASS_Projeto_GERED_Atualizado_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        return send_file(
+            out,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=nome_arq
+        )
+
+    # Fallback HTML/Excel caso openpyxl não esteja instalado no container
+    ths = "".join(f"<th style='background:#003366;color:#FFF;padding:8px;'>{h}</th>" for h in cabecalhos)
+    trs = ""
+    for it in itens:
+        cod = it["codigo"]
+        hist = json.loads(it.get("historico_json") or "{}")
+        col_b = f"{it['apontamento_ans']}\n\n{it['medidas_implementadas']}".replace("\n", "<br>")
+        obs = it["observacoes"].replace("\n", "<br>")
+        tds = f"<td><b>{it['titulo']}</b></td><td>{col_b}</td><td>{obs}</td>"
+        mapa_dems = dems_por_item.get(cod, {})
+        for nome_c in colunas_competencias:
+            d_row = mapa_dems.get(nome_c)
+            lista_c = chks_por_dem.get(d_row["id"], []) if d_row else []
+            txt_cel = montar_celula_competencia_planilha(d_row, lista_c, hist.get(nome_c, "")).replace("\n", "<br>")
+            tds += f"<td>{txt_cel}</td>"
+        trs += f"<tr>{tds}</tr>"
+
+    html_xls = f"<html xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body><table border='1'>{ths}{trs}</table></body></html>"
+    return send_file(
+        io.BytesIO(("\ufeff" + html_xls).encode("utf-8")),
+        mimetype="application/vnd.ms-excel",
+        as_attachment=True,
+        download_name="PRASS_Projeto_GERED_Atualizado.xls"
+    )
+
+
 @app.route("/api/item/<path:codigo>/areas", methods=["POST"])
 def api_atualizar_areas(codigo):
     body = request.get_json(force=True)
@@ -1583,10 +1505,6 @@ def api_criar_demanda():
 
 @app.route("/api/demanda/<int:demanda_id>/resumo", methods=["POST"])
 def api_salvar_resumo_demanda(demanda_id):
-    """
-    Salva o texto da caixinha de Resumo (antes das evidências) no banco.
-    Se já houver um oficio_texto salvo, sincroniza apenas a Seção 1 (Resumo) mantendo as edições da Seção 2!
-    """
     body = request.get_json(force=True)
     resumo_texto = body.get("resumo_texto", "").strip()
 
@@ -1777,12 +1695,6 @@ def api_baixar_anexo(anexo_id):
 
 @app.route("/api/demanda/<int:demanda_id>/gerar-minuta-oficio", methods=["POST"])
 def api_gerar_minuta_oficio(demanda_id):
-    """
-    CORREÇÃO DEFINITIVA DE PERSISTÊNCIA DA ÚLTIMA VERSÃO:
-    - Se já existir um oficio_texto salvo no banco e 'regenerar' for False, retorna exatamente
-      a última versão editada pelo analista (atualizando apenas a Seção 1 se o Resumo tiver mudado).
-    - Só recria do zero se não existir versão salva ou se o analista clicar em 'Recriar Automático'.
-    """
     body = request.get_json(silent=True) or {}
     forcar_regeneracao = bool(body.get("regenerar", False))
 
@@ -1826,7 +1738,6 @@ def api_gerar_minuta_oficio(demanda_id):
     oficio_salvo = (dem_row.get("oficio_texto") or "").strip()
 
     if oficio_salvo and not forcar_regeneracao:
-        # Mantém a última versão editada e salva pelo analista!
         if "resumo_texto" in body and body["resumo_texto"].strip():
             oficio_salvo = atualizar_bloco_resumo_no_oficio_salvo(oficio_salvo, body["resumo_texto"].strip())
             db_query(
@@ -1872,11 +1783,9 @@ def api_salvar_oficio(demanda_id):
 
 @app.route("/api/demanda/<int:demanda_id>/exportar-word", methods=["POST"])
 def api_exportar_word(demanda_id):
-    """Salva a edição mais recente no banco e exporta o Ofício em Word (.doc)."""
     body = request.get_json(force=True)
     texto_oficio = body.get("texto_oficio", "").strip()
 
-    # Persiste a versão editada antes de baixar o Word
     db_query(
         "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
         (texto_oficio, demanda_id),
@@ -1930,7 +1839,6 @@ def api_exportar_pdf_unificado(demanda_id):
     dem_row = dem[0]
     it_row = db_query("SELECT * FROM prass_items WHERE codigo = %s", (dem_row["item_codigo"],))[0]
 
-    # Salva imediatamente no banco a versão aprovada/editada pelo analista
     db_query(
         "UPDATE demandas SET oficio_texto = %s WHERE id = %s",
         (texto_oficio, demanda_id),
@@ -2009,27 +1917,24 @@ def api_exportar_pdf_unificado(demanda_id):
 
 
 # ==============================================================================
-# FRONTEND WEB COMPLETO EMBUTIDO (HTML5 + CSS3 + JAVASCRIPT VANILLA)
+# FRONTEND WEB COMPLETO EMBUTIDO (HTML5 + CSS3 + JAVASCRIPT)
 # ==============================================================================
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Postal Saúde | Sistema de Automação PRASS — GERED (CODER • COCAP • CONEC)</title>
+<title>Postal Saúde | Sistema de Automação PRASS — GERED</title>
 <style>
     :root {
         --azul-postal: #003366;
         --azul-escuro: #001F3F;
         --amarelo-postal: #F2A900;
-        --amarelo-claro: #FFF8E1;
         --bg-geral: #F0F4F8;
-        --card-bg: #FFFFFF;
         --texto: #0F172A;
         --cinza-borda: #CBD5E1;
         --verde: #198754;
         --verde-bg: #D1E7DD;
-        --amarelo-status: #B45309;
         --amarelo-status-bg: #FEF3C7;
         --vermelho: #DC3545;
         --vermelho-bg: #F8D7DA;
@@ -2056,6 +1961,22 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     .brand-title { font-size: 18px; font-weight: 800; letter-spacing: 0.3px; }
     .brand-sub { font-size: 12px; color: #FFD100; margin-top: 2px; }
+    .header-right { display: flex; align-items: center; gap: 10px; }
+    .btn-export-excel {
+        background: #107C41;
+        color: #FFFFFF;
+        border: 1px solid #34D399;
+        padding: 7px 14px;
+        border-radius: 6px;
+        font-size: 12.5px;
+        font-weight: 800;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .btn-export-excel:hover { background: #0E6A37; }
     .db-badge {
         background: rgba(255,255,255,0.12);
         border: 1px solid rgba(255,255,255,0.25);
@@ -2065,11 +1986,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-weight: 600;
         cursor: pointer;
     }
-    .main-container {
-        display: flex;
-        flex: 1;
-        overflow: hidden;
-    }
+    .main-container { display: flex; flex: 1; overflow: hidden; }
     .sidebar {
         width: 390px;
         background: #FFFFFF;
@@ -2089,11 +2006,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         justify-content: space-between;
         align-items: center;
     }
-    .items-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 10px;
-    }
+    .items-list { flex: 1; overflow-y: auto; padding: 10px; }
     .prass-item-card {
         border: 1px solid #E2E8F0;
         border-radius: 8px;
@@ -2102,12 +2015,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         cursor: pointer;
         transition: all 0.15s ease;
         background: #FFFFFF;
-        position: relative;
     }
-    .prass-item-card:hover {
-        border-color: #94A3B8;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-    }
+    .prass-item-card:hover { border-color: #94A3B8; }
     .prass-item-card.active {
         border: 2px solid var(--azul-postal);
         background: #F0F7FF;
@@ -2133,13 +2042,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         line-height: 1.35;
         margin-bottom: 8px;
     }
-    .semaforo-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
-        margin-top: 6px;
-    }
+    .semaforo-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
     .area-pill {
         font-size: 10.5px;
         font-weight: 700;
@@ -2166,30 +2069,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         border: 1px solid var(--cinza-borda);
         border-radius: 10px;
         padding: 16px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }
-    .banner-header-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 16px;
-    }
-    .banner-title {
-        font-size: 16px;
-        font-weight: 800;
-        color: var(--azul-postal);
-        line-height: 1.35;
-    }
-    .banner-actions {
-        display: flex;
-        gap: 8px;
-        flex-shrink: 0;
-        align-items: center;
-    }
-    .dropdown-areas {
-        position: relative;
-        display: inline-block;
-    }
+    .banner-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .banner-title { font-size: 16px; font-weight: 800; color: var(--azul-postal); line-height: 1.35; }
+    .banner-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+    .dropdown-areas { position: relative; display: inline-block; }
     .dropdown-btn {
         background: #F8FAFC;
         border: 1px solid var(--cinza-borda);
@@ -2223,12 +2107,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         padding: 5px 0;
         cursor: pointer;
     }
-    .planilha-buttons-row {
-        display: flex;
-        gap: 10px;
-        margin-top: 14px;
-        flex-wrap: wrap;
-    }
+    .planilha-buttons-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
     .btn-info-planilha {
         flex: 1;
         min-width: 220px;
@@ -2240,13 +2119,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-weight: 700;
         font-size: 12.5px;
         cursor: pointer;
-        text-align: left;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        transition: all 0.15s;
     }
-    .btn-info-planilha:hover { background: #E2E8F0; }
     .btn-info-planilha.active {
         background: var(--azul-postal);
         color: #FFFFFF;
@@ -2278,18 +2154,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         align-items: center;
         justify-content: space-between;
     }
-    .control-group {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-    .control-label {
-        font-size: 12px;
-        font-weight: 800;
-        text-transform: uppercase;
-        color: #475569;
-    }
+    .control-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .control-label { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #475569; }
     .seg-btn {
         padding: 7px 14px;
         border-radius: 6px;
@@ -2322,9 +2188,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-size: 13px;
         font-weight: 800;
         cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
         background: #E2E8F0;
         color: #1E293B;
     }
@@ -2333,8 +2196,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         color: #FFFFFF;
         border-color: var(--amarelo-postal);
     }
-
-    /* CAIXINHA DE RESUMO EM TEXTO (ANTES DAS EVIDÊNCIAS) */
     .resumo-before-box {
         background: #F8FAFC;
         border: 1px solid #93C5FD;
@@ -2345,32 +2206,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         flex-direction: column;
         gap: 8px;
     }
-    .resumo-header-line {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
+    .resumo-header-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
     .resumo-textarea {
         width: 100%;
         min-height: 110px;
         padding: 10px 12px;
         border: 1px solid #CBD5E1;
         border-radius: 6px;
-        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-family: inherit;
         font-size: 13px;
         line-height: 1.5;
         color: #0F172A;
         resize: vertical;
         background: #FFFFFF;
     }
-    .resumo-textarea:focus {
-        outline: none;
-        border-color: var(--azul-postal);
-        box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
-    }
-
     .checklist-panel {
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
@@ -2380,17 +2229,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         flex-direction: column;
         gap: 14px;
     }
-    .chk-header-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        flex-wrap: wrap;
-    }
-    .progress-wrap {
-        flex: 1;
-        min-width: 260px;
-    }
+    .chk-header-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .progress-wrap { flex: 1; min-width: 260px; }
     .progress-bar-outer {
         width: 100%;
         height: 12px;
@@ -2399,12 +2239,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         overflow: hidden;
         margin-top: 5px;
     }
-    .progress-bar-inner {
-        height: 100%;
-        background: var(--verde);
-        width: 0%;
-        transition: width 0.25s ease;
-    }
+    .progress-bar-inner { height: 100%; background: var(--verde); width: 0%; transition: width 0.25s ease; }
     .add-chk-row {
         display: flex;
         gap: 8px;
@@ -2459,36 +2294,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         flex-direction: column;
         gap: 8px;
     }
-    .chk-item-card.concluido {
-        border-left: 5px solid var(--verde);
-        background: #F8FFF9;
-    }
-    .chk-item-card.pendente {
-        border-left: 5px solid var(--vermelho);
-    }
-    .chk-top-line {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 10px;
-    }
-    .chk-title-group {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex: 1;
-    }
-    .chk-title-text {
-        font-size: 13.5px;
-        font-weight: 700;
-        color: #0F172A;
-    }
-    .chk-tools {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        flex-wrap: wrap;
-    }
+    .chk-item-card.concluido { border-left: 5px solid var(--verde); background: #F8FFF9; }
+    .chk-item-card.pendente { border-left: 5px solid var(--vermelho); }
+    .chk-top-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .chk-title-group { display: flex; align-items: center; gap: 10px; flex: 1; }
+    .chk-title-text { font-size: 13.5px; font-weight: 700; color: #0F172A; }
+    .chk-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .tool-btn {
         border: 1px solid #CBD5E1;
         background: #F8FAFC;
@@ -2499,7 +2310,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-weight: 700;
         cursor: pointer;
     }
-    .tool-btn:hover { background: #E2E8F0; }
     .tool-btn.concluir-on { background: var(--verde); color: #FFF; border-color: var(--verde); }
     .tool-btn.danger { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }
     .anexos-box {
@@ -2521,11 +2331,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         align-items: center;
         gap: 6px;
     }
-    .anexo-chip a {
-        text-decoration: none;
-        font-weight: 700;
-        color: var(--azul-postal);
-    }
+    .anexo-chip a { text-decoration: none; font-weight: 700; color: var(--azul-postal); }
     .modal-backdrop {
         display: none;
         position: fixed;
@@ -2546,7 +2352,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
     }
     .modal-header {
         background: var(--azul-postal);
@@ -2556,14 +2361,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         justify-content: space-between;
         align-items: center;
     }
-    .modal-body {
-        padding: 18px 20px;
-        overflow-y: auto;
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
+    .modal-body { padding: 18px 20px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; }
     .oficio-textarea {
         width: 100%;
         min-height: 360px;
@@ -2590,9 +2388,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <header>
     <div>
         <div class="brand-title">POSTAL SAÚDE | SISTEMA DE AUTOMAÇÃO PRASS — GERED</div>
-        <div class="brand-sub">Módulos 8.1.2 a 8.6.1 • Coordenações CODER, COCAP e CONEC • Resumo + Análise Automática de Ofício + Dossiê PDF Unificado</div>
+        <div class="brand-sub">Módulos 8.1.2 a 8.6.1 • Coordenações CODER, COCAP e CONEC • Resumo + Ofício Persistente + Exportação Excel e PDF</div>
     </div>
-    <div class="db-badge" id="dbBadge" onclick="verDiagnosticoBanco()" title="Clique para ver detalhes da conexão com o banco">Conectando ao Banco...</div>
+    <div class="header-right">
+        <a href="/api/exportar-planilha" class="btn-export-excel" title="Baixar Planilha Excel formatada igual ao modelo PRASS com tudo o que foi preenchido no sistema">
+            📊 Exportar Planilha PRASS (.xlsx)
+        </a>
+        <div class="db-badge" id="dbBadge" onclick="verDiagnosticoBanco()">Conectando ao Banco...</div>
+    </div>
 </header>
 
 <div class="main-container">
@@ -2668,7 +2471,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         </section>
 
         <section class="checklist-panel">
-            <!-- CAIXINHA DE RESUMO EM TEXTO ANTES DAS EVIDÊNCIAS (ENTRA NO TOPO DO OFÍCIO ANTES DA ANÁLISE) -->
+            <!-- CAIXINHA DE RESUMO ANTES DAS EVIDÊNCIAS -->
             <div class="resumo-before-box">
                 <div class="resumo-header-line">
                     <div>
@@ -2676,23 +2479,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                             📝 Resumo Executivo / Considerações Iniciais (Antes das Evidências)
                         </span>
                         <span style="font-size:11.5px; color:#475569; margin-left:6px;">
-                            • Este texto sairá na Seção 1 do Ofício, logo antes da análise técnica das evidências abaixo.
+                            • Sai na Seção 1 do Ofício e na coluna da Competência ao exportar a Planilha PRASS.
                         </span>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
                         <span id="statusResumoSalvo" style="font-size:11.5px; color:var(--verde); font-weight:700;"></span>
-                        <button class="tool-btn" onclick="importarResumoPlanilhaBase()" title="Carregar o texto integral desta competência registrado na planilha inicial">
-                            📥 Puxar Texto da Planilha Base
-                        </button>
-                        <button class="btn-primary" style="padding:5px 12px; font-size:12px;" onclick="salvarResumoDemanda(true)">
-                            💾 Salvar Resumo
-                        </button>
+                        <button class="tool-btn" onclick="importarResumoPlanilhaBase()">📥 Puxar Texto da Planilha Base</button>
+                        <button class="btn-primary" style="padding:5px 12px; font-size:12px;" onclick="salvarResumoDemanda(true)">💾 Salvar Resumo</button>
                     </div>
                 </div>
                 <textarea
                     id="textareaResumoDemanda"
                     class="resumo-textarea"
-                    placeholder="Digite aqui o resumo geral deste item do PRASS antes das evidências (ele sairá automaticamente no início do Ofício, antes da análise detalhada dos anexos)..."
+                    placeholder="Digite aqui o resumo geral deste item do PRASS antes das evidências..."
                     onblur="salvarResumoDemanda(false)"
                 ></textarea>
             </div>
@@ -2737,9 +2536,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
                     <span style="font-size:12.5px; font-weight:700; color:#334155;">Texto do Ofício (Editável pelo Analista):</span>
                     <span id="badgeStatusOficioModal" style="font-size:11.5px; font-weight:700; color:var(--verde); margin-left:8px;"></span>
                 </div>
-                <button class="tool-btn" onclick="regenerarTextoOficio()" title="Recria o texto automático puxando novos anexos do checklist">
-                    🔄 Recriar Ofício do Zero (Puxar Novos Anexos)
-                </button>
+                <button class="tool-btn" onclick="regenerarTextoOficio()">🔄 Recriar Ofício do Zero (Puxar Novos Anexos)</button>
             </div>
             <textarea class="oficio-textarea" id="textareaOficio" onblur="salvarRascunhoOficio(true)"></textarea>
             <div id="resumoArquivosModal" style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; padding:10px 14px; font-size:12px;"></div>
@@ -2785,17 +2582,11 @@ async function carregarSistema() {
     try {
         const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`, { cache: 'no-store' });
         const dados = await resp.json();
-        if (!resp.ok || dados.erro) {
-            throw new Error(dados.erro || 'Falha HTTP ' + resp.status);
-        }
+        if (!resp.ok || dados.erro) throw new Error(dados.erro || 'Falha HTTP ' + resp.status);
         ESTADO_ITENS = dados.itens;
 
         const badge = document.getElementById('dbBadge');
-        if (dados.postgres_ativo) {
-            badge.textContent = '🟢 PostgreSQL Railway Ativo';
-        } else {
-            badge.textContent = '🟢 Banco Persistente Ativo (Clique p/ Info)';
-        }
+        badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Railway Ativo' : '🟢 Banco Persistente Ativo';
 
         if (!ITEM_ATUAL && ESTADO_ITENS.length > 0) {
             ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === '8.5.1') || ESTADO_ITENS[0];
@@ -2854,10 +2645,7 @@ function renderizarItemAtual() {
         chk.checked = ITEM_ATUAL.areas_atribuidas.includes(chk.value);
     });
 
-    if (DRAWER_ABERTO) {
-        atualizarTextoDrawer();
-    }
-
+    if (DRAWER_ABERTO) atualizarTextoDrawer();
     populaSelectDemandas();
 }
 
@@ -2900,13 +2688,9 @@ function toggleDrawer(qual) {
 function atualizarTextoDrawer() {
     const drawer = document.getElementById('drawerContent');
     if (!ITEM_ATUAL || !DRAWER_ABERTO) return;
-    if (DRAWER_ABERTO === 'apontamento') {
-        drawer.textContent = ITEM_ATUAL.apontamento_ans;
-    } else if (DRAWER_ABERTO === 'medidas') {
-        drawer.textContent = ITEM_ATUAL.medidas_implementadas;
-    } else if (DRAWER_ABERTO === 'obs') {
-        drawer.textContent = ITEM_ATUAL.observacoes;
-    }
+    if (DRAWER_ABERTO === 'apontamento') drawer.textContent = ITEM_ATUAL.apontamento_ans;
+    else if (DRAWER_ABERTO === 'medidas') drawer.textContent = ITEM_ATUAL.medidas_implementadas;
+    else if (DRAWER_ABERTO === 'obs') drawer.textContent = ITEM_ATUAL.observacoes;
 }
 
 function selecionarTipoDemanda(tipo) {
@@ -2995,9 +2779,7 @@ async function salvarResumoDemanda(mostrarAlerta) {
         const lbl = document.getElementById('statusResumoSalvo');
         lbl.textContent = '✔ Resumo salvo!';
         setTimeout(() => { lbl.textContent = ''; }, 3000);
-        if (mostrarAlerta) {
-            alert('Resumo executivo salvo com sucesso! Ele já foi sincronizado na Seção 1 do Ofício.');
-        }
+        if (mostrarAlerta) alert('Resumo executivo salvo e sincronizado na Seção 1 do Ofício!');
     }
 }
 
@@ -3005,13 +2787,11 @@ async function importarResumoPlanilhaBase() {
     if (!ITEM_ATUAL || !DEMANDA_ATUAL_ID) return;
     const histTxt = (ITEM_ATUAL.historico_planilha && ITEM_ATUAL.historico_planilha[DEMANDA_ATUAL_NOME]) || '';
     if (!histTxt || histTxt === 'N/A' || histTxt === 'Preencher') {
-        alert('Não há texto histórico pré-cadastrado na planilha inicial para a competência "' + DEMANDA_ATUAL_NOME + '".');
+        alert('Não há texto histórico pré-cadastrado na planilha inicial para "' + DEMANDA_ATUAL_NOME + '".');
         return;
     }
     const atual = document.getElementById('textareaResumoDemanda').value.trim();
-    if (atual && !confirm('Substituir o texto atual da caixinha pelo texto integral da planilha para "' + DEMANDA_ATUAL_NOME + '"?')) {
-        return;
-    }
+    if (atual && !confirm('Substituir o texto atual da caixinha pelo texto da planilha base?')) return;
     document.getElementById('textareaResumoDemanda').value = histTxt;
     await salvarResumoDemanda(false);
 }
@@ -3023,9 +2803,7 @@ async function carregarChecklistDemanda() {
     CHECKLIST_ATUAL = dados.checklist || [];
     ITEM_ATUAL.semaforo = dados.semaforo;
 
-    const resumoSalvo = (dados.demanda && dados.demanda.resumo_texto) ? dados.demanda.resumo_texto : '';
-    document.getElementById('textareaResumoDemanda').value = resumoSalvo;
-
+    document.getElementById('textareaResumoDemanda').value = (dados.demanda && dados.demanda.resumo_texto) ? dados.demanda.resumo_texto : '';
     renderizarSemaforoTopo(dados.semaforo);
     renderizarChecklistNaTela();
 }
@@ -3087,9 +2865,9 @@ function renderizarChecklistNaTela() {
                 anexosHtml += `
                     <div class="anexo-chip">
                         <span>📄 ${a.nome_arquivo}</span>
-                        <a href="/api/anexos/${a.id}/view" target="_blank" title="Visualizar Anexo">👁️ Ver</a>
-                        <a href="/api/anexos/${a.id}/download" title="Baixar Anexo">⬇️ Baixar</a>
-                        <button onclick="removerAnexo(${a.id})" style="border:none; background:none; color:#DC3545; font-weight:800; cursor:pointer;" title="Remover Anexo (volta para Pendente)">✖</button>
+                        <a href="/api/anexos/${a.id}/view" target="_blank">👁️ Ver</a>
+                        <a href="/api/anexos/${a.id}/download">⬇️ Baixar</a>
+                        <button onclick="removerAnexo(${a.id})" style="border:none; background:none; color:#DC3545; font-weight:800; cursor:pointer;">✖</button>
                     </div>
                 `;
             });
@@ -3119,10 +2897,7 @@ function renderizarChecklistNaTela() {
 }
 
 async function adicionarEvidencia() {
-    if (!DEMANDA_ATUAL_ID) {
-        alert('Selecione ou crie uma demanda primeiro.');
-        return;
-    }
+    if (!DEMANDA_ATUAL_ID) return alert('Selecione uma demanda primeiro.');
     const input = document.getElementById('inputNovaEvidencia');
     const titulo = input.value.trim();
     if (!titulo) return;
@@ -3168,8 +2943,7 @@ async function excluirEvidencia(chkId) {
 
 async function alternarConclusao(chkId, novoStatus, qtdAnexos) {
     if (novoStatus && qtdAnexos === 0) {
-        const ok = confirm('Atenção: Este item ainda não possui anexo importado. Deseja marcá-lo como CONCLUÍDO mesmo assim?');
-        if (!ok) return;
+        if (!confirm('Este item ainda não possui anexo importado. Deseja marcá-lo como CONCLUÍDO mesmo assim?')) return;
     }
     await fetch(`/api/checklist/${chkId}`, {
         method: 'PUT',
@@ -3211,14 +2985,8 @@ async function removerAnexo(anexoId) {
     await carregarSistema();
 }
 
-// ==============================================================================
-// MODAL DO OFÍCIO: SEMPRE ABRE A ÚLTIMA VERSÃO SALVA (regenerar: false)
-// ==============================================================================
 async function abrirModalOficio() {
-    if (!DEMANDA_ATUAL_ID) {
-        alert('Selecione uma demanda primeiro.');
-        return;
-    }
+    if (!DEMANDA_ATUAL_ID) return alert('Selecione uma demanda primeiro.');
     const resumoAtual = document.getElementById('textareaResumoDemanda').value;
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/gerar-minuta-oficio`, {
         method: 'POST',
@@ -3235,11 +3003,7 @@ async function abrirModalOficio() {
 }
 
 async function regenerarTextoOficio() {
-    const ok = confirm(
-        "Atenção: Recriar o Ofício do zero irá montar novamente o texto automático com base no Resumo e nos Anexos atuais, substituindo eventuais edições manuais feitas no texto abaixo.\n\nDeseja recriar mesmo assim?"
-    );
-    if (!ok) return;
-
+    if (!confirm('Recriar o Ofício do zero irá montar novamente o texto automático com base no Resumo e nos Anexos atuais, substituindo eventuais edições manuais feitas abaixo. Continuar?')) return;
     const resumoAtual = document.getElementById('textareaResumoDemanda').value;
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/gerar-minuta-oficio`, {
         method: 'POST',
@@ -3271,20 +3035,16 @@ function preencherModalOficio(dados) {
     const qtdPdf = (dados.arquivos_pdf || []).length;
     const qtdXls = (dados.arquivos_excel || []).length;
 
-    let html = `<b>📦 Composição do Dossiê Unificado que será gerado após sua aprovação:</b><br>`;
-    html += `• <b>1º) Ofício de Resposta (acima)</b> com o <b>Resumo Executivo (Seção 1)</b> seguido da <b>Análise das Evidências (Seção 2)</b>;<br>`;
-    html += `• <b>2º) ${qtdPdf} anexo(s) PDF/Imagem</b> mesclados integralmente logo abaixo do Ofício em um único PDF;<br>`;
+    let html = `<b>📦 Composição do Dossiê Unificado:</b> `;
+    html += `1º) Ofício de Resposta (Resumo + Análise) | 2º) ${qtdPdf} anexo(s) PDF/Imagem mesclados no mesmo PDF`;
     if (qtdXls > 0) {
         const nomesXls = dados.arquivos_excel.map(x => x.nome_arquivo).join(', ');
-        html += `• <b>3º) ${qtdXls} planilha(s) Excel/CSV</b> citadas expressamente pelo nome no corpo e no índice do Ofício: <code>${nomesXls}</code>.`;
-    } else {
-        html += `• Nenhuma planilha Excel/CSV externa pendente de citação nominal.`;
+        html += ` | 3º) ${qtdXls} planilha(s) citada(s) pelo nome: <code>${nomesXls}</code>.`;
     }
     box.innerHTML = html;
 }
 
 async function fecharModalOficio() {
-    // Salva automaticamente qualquer alteração feita antes de fechar a janela
     if (DEMANDA_ATUAL_ID) {
         const texto = document.getElementById('textareaOficio').value;
         await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/salvar-oficio`, {
@@ -3306,11 +3066,8 @@ async function salvarRascunhoOficio(silencioso) {
     });
     if (resp.ok) {
         const d = await resp.json();
-        const badge = document.getElementById('badgeStatusOficioModal');
-        badge.textContent = `✔ Última versão salva no banco às ${d.horario || 'agora'}`;
-        if (!silencioso) {
-            alert('Última versão do Ofício salva com sucesso no banco de dados!');
-        }
+        document.getElementById('badgeStatusOficioModal').textContent = `✔ Última versão salva às ${d.horario || 'agora'}`;
+        if (!silencioso) alert('Última versão do Ofício salva com sucesso no banco de dados!');
     }
 }
 
@@ -3322,10 +3079,7 @@ async function baixarOficioEmWord() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ texto_oficio: texto })
     });
-    if (!resp.ok) {
-        alert('Erro ao gerar documento Word.');
-        return;
-    }
+    if (!resp.ok) return alert('Erro ao gerar documento Word.');
     const blob = await resp.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -3345,10 +3099,7 @@ async function aprovarEBaixarPDFUnificado() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ texto_oficio: texto })
     });
-    if (!resp.ok) {
-        alert('Erro ao gerar o PDF unificado.');
-        return;
-    }
+    if (!resp.ok) return alert('Erro ao gerar o PDF unificado.');
     const blob = await resp.blob();
     const nomeSugerido = `Oficio_e_Evidencias_PRASS_${ITEM_ATUAL.codigo.replace(/\./g, '_')}_${DEMANDA_ATUAL_NOME.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
 
@@ -3356,10 +3107,7 @@ async function aprovarEBaixarPDFUnificado() {
         try {
             const handle = await window.showSaveFilePicker({
                 suggestedName: nomeSugerido,
-                types: [{
-                    description: 'Documento PDF Unificado',
-                    accept: {'application/pdf': ['.pdf']}
-                }]
+                types: [{ description: 'Documento PDF Unificado', accept: {'application/pdf': ['.pdf']} }]
             });
             const writable = await handle.createWritable();
             await writable.write(blob);
