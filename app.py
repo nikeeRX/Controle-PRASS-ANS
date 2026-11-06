@@ -62,8 +62,38 @@ app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # Limite de 64MB para uploa
 
 
 # ==============================================================================
-# DADOS FIXOS DA PLANILHA MODELO (PRASS - PROJETO - BASE INICIAL)
+# OPÇÕES PADRONIZADAS DE PREENCHIMENTO DA PLANILHA PRASS (MÓDULO PLANILHA)
 # ==============================================================================
+OPCOES_STATUS_PLANILHA = [
+    "Finalizado / Concluído",
+    "Em Andamento / Em Implementação",
+    "Parcialmente Atendido (Em Complementação)",
+    "Aguardando Área Técnica (GETEC / GECOF / GEREL)",
+    "Preencher",
+    "N/A (Não Aplicável)"
+]
+
+SUBITENS_SUGERIDOS_POR_SETOR = {
+    "CODER": [
+        "Vulnerabilidade de Rede (Painel de Análise de Vulnerabilidade)",
+        "Monitoramento de Garantia de Atendimento e Reembolso Integral",
+        "Garantia de Atendimento em virtude das suspensões contratuais (RN 566/2022)",
+        "Revisão das Instruções Normativas IOT 222 e IOT 224"
+    ],
+    "COCAP": [
+        "Bases de rede e controles de atualização (BENNER / Relatório POSTAL 988)",
+        "Rede credenciada no portal corporativo: RN 486/2022, art. 2º",
+        "Registros de movimentação e substituição de rede não hospitalar: RN 567/2022, art. 11",
+        "Gerenciamento de inconsistências do Guia de Saúde (GLPI 30182) e Higienização (IOT 068)"
+    ],
+    "CONEC": [
+        "Atualização de normativos: Manual MAN006 e Instrução Operacional IOT 036.07",
+        "Suspensão de atendimento por inadimplência (Registro, Negociação e Quitação)",
+        "Gestão da Rede Assistencial Direta e Indireta (Compliance e Contratos)",
+        "Aplicação das IOTs 031 (Descredenciamento), 035 (Recontratualização) e 036 (Credenciamento)"
+    ]
+}
+
 DEMANDAS_FIXAS_PADRAO = [
     "Status 08/2026",
     "Status 09/2026",
@@ -712,7 +742,17 @@ def db_query(sql, params=(), fetch=True, commit=False):
         conn.close()
 
 
-def init_db():
+def inferir_status_inicial(nome_dem, resumo_inicial):
+    if resumo_inicial == "N/A":
+        return "N/A (Não Aplicável)"
+    if nome_dem in ("Status 08/2026", "Status 09/2026", "Status 10/2026") and resumo_inicial:
+        return "Finalizado / Concluído"
+    if nome_dem == "Complemento ANS 26/10" and resumo_inicial:
+        return "Em Andamento / Em Implementação"
+    return "Preencher"
+
+
+def init_db(forcar_reparo=False):
     global DB_INITIALIZED
     conn, is_pg = get_db_conn()
     try:
@@ -737,6 +777,8 @@ def init_db():
                     ordem INT DEFAULT 100,
                     resumo_texto TEXT DEFAULT '',
                     oficio_texto TEXT DEFAULT '',
+                    status_planilha VARCHAR(80) DEFAULT 'Preencher',
+                    dados_planilha_json TEXT DEFAULT '{}',
                     UNIQUE(item_codigo, nome)
                 );
                 CREATE TABLE IF NOT EXISTS checklist_evidencias (
@@ -761,6 +803,8 @@ def init_db():
             """)
             cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS resumo_texto TEXT DEFAULT '';")
             cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS oficio_texto TEXT DEFAULT '';")
+            cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS status_planilha VARCHAR(80) DEFAULT 'Preencher';")
+            cur.execute("ALTER TABLE demandas ADD COLUMN IF NOT EXISTS dados_planilha_json TEXT DEFAULT '{}';")
         else:
             cur.executescript("""
                 CREATE TABLE IF NOT EXISTS prass_items (
@@ -781,6 +825,8 @@ def init_db():
                     ordem INTEGER DEFAULT 100,
                     resumo_texto TEXT DEFAULT '',
                     oficio_texto TEXT DEFAULT '',
+                    status_planilha TEXT DEFAULT 'Preencher',
+                    dados_planilha_json TEXT DEFAULT '{}',
                     UNIQUE(item_codigo, nome)
                 );
                 CREATE TABLE IF NOT EXISTS checklist_evidencias (
@@ -809,6 +855,10 @@ def init_db():
                 cur.execute("ALTER TABLE demandas ADD COLUMN resumo_texto TEXT DEFAULT '';")
             if "oficio_texto" not in cols:
                 cur.execute("ALTER TABLE demandas ADD COLUMN oficio_texto TEXT DEFAULT '';")
+            if "status_planilha" not in cols:
+                cur.execute("ALTER TABLE demandas ADD COLUMN status_planilha TEXT DEFAULT 'Preencher';")
+            if "dados_planilha_json" not in cols:
+                cur.execute("ALTER TABLE demandas ADD COLUMN dados_planilha_json TEXT DEFAULT '{}';")
         conn.commit()
     finally:
         conn.close()
@@ -854,27 +904,35 @@ def init_db():
 
         for idx_d, nome_dem in enumerate(DEMANDAS_FIXAS_PADRAO, start=1):
             ja_tem = db_query(
-                "SELECT id, resumo_texto FROM demandas WHERE item_codigo = %s AND nome = %s",
+                "SELECT id, resumo_texto, status_planilha, dados_planilha_json FROM demandas WHERE item_codigo = %s AND nome = %s",
                 (cod, nome_dem)
             )
-            resumo_inicial = hist_dict.get(nome_dem, "").strip()
-            if resumo_inicial in ("N/A", "Preencher", "Prencher"):
-                resumo_inicial = ""
+            bruto_hist = hist_dict.get(nome_dem, "").strip()
+            st_ini = inferir_status_inicial(nome_dem, bruto_hist)
+            resumo_inicial = "" if bruto_hist in ("N/A", "Preencher", "Prencher") else bruto_hist
 
             if not ja_tem:
                 db_query(
-                    "INSERT INTO demandas (item_codigo, nome, tipo, ordem, resumo_texto) VALUES (%s, %s, %s, %s, %s)",
-                    (cod, nome_dem, "FIXA", idx_d, resumo_inicial),
+                    """INSERT INTO demandas (item_codigo, nome, tipo, ordem, resumo_texto, status_planilha, dados_planilha_json)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (cod, nome_dem, "FIXA", idx_d, resumo_inicial, st_ini, "{}"),
                     fetch=False,
                     commit=True
                 )
-            elif not (ja_tem[0].get("resumo_texto") or "").strip() and resumo_inicial:
-                db_query(
-                    "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
-                    (resumo_inicial, ja_tem[0]["id"]),
-                    fetch=False,
-                    commit=True
-                )
+            else:
+                row_d = ja_tem[0]
+                precisa_up = forcar_reparo or (not (row_d.get("resumo_texto") or "").strip() and resumo_inicial)
+                if precisa_up:
+                    novo_res = (row_d.get("resumo_texto") or "").strip() or resumo_inicial
+                    novo_st = row_d.get("status_planilha") or st_ini
+                    if novo_st == "Preencher" and st_ini != "Preencher":
+                        novo_st = st_ini
+                    db_query(
+                        "UPDATE demandas SET resumo_texto = %s, status_planilha = %s WHERE id = %s",
+                        (novo_res, novo_st, row_d["id"]),
+                        fetch=False,
+                        commit=True
+                    )
 
         if cod in CHECKLISTS_INICIAIS_COMPLEMENTO:
             dem_row = db_query(
@@ -1019,6 +1077,7 @@ def construir_texto_oficio_automatico(item_row, demanda_row, checklists_com_anex
         "RESPOSTA AO OFÍCIO DA ANS — MONITORAMENTO PRASS POSTAL SAÚDE",
         f"ITEM DO PRASS: {item_row['titulo']}",
         f"REFERÊNCIA / DEMANDA: {demanda_row['nome']} ({demanda_row['tipo']})",
+        f"STATUS NA PLANILHA PRASS: {demanda_row.get('status_planilha') or 'Em Andamento'}",
         f"COORDENAÇÕES ATRIBUÍDAS (GERED): {', '.join(json.loads(item_row['areas_atribuidas']))}",
         "",
         "1. RESUMO EXECUTIVO E CONSIDERAÇÕES INICIAIS",
@@ -1117,12 +1176,48 @@ def atualizar_bloco_resumo_no_oficio_salvo(texto_oficio_salvo, novo_resumo):
 
 
 def montar_celula_competencia_planilha(dem_row, chks_demanda, texto_hist_original):
-    resumo = (dem_row.get("resumo_texto") or "").strip() if dem_row else ""
-    partes = []
+    if not dem_row:
+        return texto_hist_original if texto_hist_original else "Preencher"
+
+    st_plan = (dem_row.get("status_planilha") or "Preencher").strip()
+    if st_plan.startswith("N/A"):
+        return "N/A"
+
+    resumo = (dem_row.get("resumo_texto") or "").strip()
+    dados_json = {}
+    try:
+        dados_json = json.loads(dem_row.get("dados_planilha_json") or "{}")
+    except Exception:
+        dados_json = {}
+
+    blocos = []
+    # Se o usuário preencheu blocos por setor no Módulo 2 da Planilha:
+    blocos_setor = []
+    for s in ("CODER", "COCAP", "CONEC"):
+        info_s = dados_json.get(s) or {}
+        txt_s = (info_s.get("texto") or "").strip()
+        sub_s = (info_s.get("subitem") or "").strip()
+        st_s = (info_s.get("status") or "").strip()
+        ref_s = (info_s.get("referencias") or "").strip()
+        if txt_s or sub_s or ref_s:
+            cab_s = f"GERED/{s}"
+            if st_s and st_s != "Preencher":
+                cab_s += f" [{st_s}]"
+            linhas_s = [cab_s]
+            if sub_s:
+                linhas_s.append(f"Subitem: {sub_s}")
+            if ref_s:
+                linhas_s.append(f"Referências/Chamados: {ref_s}")
+            if txt_s:
+                linhas_s.append(txt_s)
+            blocos_setor.append("\n".join(linhas_s))
+
     if resumo:
-        partes.append(resumo)
+        blocos.append(resumo)
+    elif blocos_setor:
+        blocos.append("\n\n".join(blocos_setor))
     elif texto_hist_original and texto_hist_original not in ("Preencher", "Prencher"):
-        partes.append(texto_hist_original)
+        blocos.append(texto_hist_original)
 
     if chks_demanda:
         linhas_chk = ["", "[EVIDÊNCIAS E CHECKLIST NO SISTEMA]:"]
@@ -1133,10 +1228,14 @@ def montar_celula_competencia_planilha(dem_row, chks_demanda, texto_hist_origina
             linhas_chk.append(f"• [{c['setor']} - {st}] {c['titulo']}{str_arqs}")
             if (c.get("analise_evidencia") or "").strip():
                 linhas_chk.append(f"  Análise: {c['analise_evidencia'].strip()}")
-        partes.append("\n".join(linhas_chk))
+        blocos.append("\n".join(linhas_chk))
 
-    texto_final = "\n".join(partes).strip()
-    return texto_final if texto_final else "Preencher"
+    texto_final = "\n".join(blocos).strip()
+    if not texto_final:
+        return "Preencher" if st_plan == "Preencher" else f"[{st_plan}]"
+    if st_plan and st_plan != "Preencher" and not texto_final.startswith(f"[{st_plan}]"):
+        return f"[STATUS GERED: {st_plan.upper()}]\n\n{texto_final}"
+    return texto_final
 
 
 def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivos_excel, lista_pdfs_anexados):
@@ -1215,6 +1314,7 @@ def gerar_pdf_capa_oficio(titulo_item, nome_demanda, texto_oficio, lista_arquivo
         if (
             l_strip.startswith("RESPOSTA AO OFÍCIO")
             or l_strip.startswith("ITEM DO PRASS:")
+            or l_strip.startswith("STATUS NA PLANILHA")
             or l_strip.startswith("1.")
             or l_strip.startswith("2.")
             or l_strip.startswith("3.")
@@ -1276,6 +1376,17 @@ def api_diagnostico():
     })
 
 
+@app.route("/api/reset-reparo", methods=["POST"])
+def api_reset_reparo():
+    """Rota de emergência para sincronizar/reparar todas as tabelas e textos base sem perder anexos."""
+    try:
+        init_db(forcar_reparo=True)
+        return jsonify({"ok": True, "mensagem": "Estrutura do banco e textos base sincronizados com sucesso!"})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"erro": str(e)}), 500
+
+
 @app.route("/api/bootstrap", methods=["GET"])
 def api_bootstrap():
     try:
@@ -1289,6 +1400,14 @@ def api_bootstrap():
                 "SELECT * FROM demandas WHERE item_codigo = %s ORDER BY ordem ASC, id ASC",
                 (cod,)
             )
+            for d in demandas:
+                if not d.get("status_planilha"):
+                    d["status_planilha"] = "Preencher"
+                try:
+                    d["dados_planilha"] = json.loads(d.get("dados_planilha_json") or "{}")
+                except Exception:
+                    d["dados_planilha"] = {}
+
             dem_ativa = next((d for d in demandas if d["nome"] == demanda_selecionada_nome), None)
             if not dem_ativa and demandas:
                 dem_ativa = demandas[0]
@@ -1311,19 +1430,129 @@ def api_bootstrap():
         return jsonify({
             "itens": resultado_itens,
             "postgres_ativo": USE_POSTGRES,
-            "ultimo_erro_pg": LAST_PG_ERROR
+            "ultimo_erro_pg": LAST_PG_ERROR,
+            "opcoes_status_planilha": OPCOES_STATUS_PLANILHA,
+            "subitens_sugeridos": SUBITENS_SUGERIDOS_POR_SETOR
         })
     except Exception as e:
         traceback.print_exc()
         return jsonify({"erro": str(e)}), 500
 
 
+@app.route("/api/planilha/salvar-celula", methods=["POST"])
+def api_salvar_celula_planilha():
+    """Salva todos os campos do Módulo 2 (Preenchimento da Planilha PRASS) e sincroniza com a Demanda."""
+    body = request.get_json(force=True)
+    demanda_id = int(body["demanda_id"])
+    status_planilha = body.get("status_planilha", "Preencher").strip()
+    resumo_texto = body.get("resumo_texto", "").strip()
+    dados_planilha = body.get("dados_planilha", {})
+
+    dem = db_query("SELECT oficio_texto FROM demandas WHERE id = %s", (demanda_id,))
+    oficio_atual = (dem[0].get("oficio_texto") or "").strip() if dem else ""
+
+    if oficio_atual and resumo_texto:
+        oficio_atual = atualizar_bloco_resumo_no_oficio_salvo(oficio_atual, resumo_texto)
+
+    db_query(
+        """UPDATE demandas
+           SET status_planilha = %s,
+               resumo_texto = %s,
+               dados_planilha_json = %s,
+               oficio_texto = %s
+           WHERE id = %s""",
+        (
+            status_planilha,
+            resumo_texto,
+            json.dumps(dados_planilha, ensure_ascii=False),
+            oficio_atual,
+            demanda_id
+        ),
+        fetch=False,
+        commit=True
+    )
+    return jsonify({"ok": True, "horario": datetime.now().strftime("%H:%M:%S")})
+
+
+@app.route("/api/planilha/importar-xlsx", methods=["POST"])
+def api_importar_planilha_xlsx():
+    """Permite subir uma planilha .xlsx pelo navegador e sincronizar automaticamente os textos e colunas no banco."""
+    if not HAS_OPENPYXL:
+        return jsonify({"erro": "Biblioteca openpyxl não disponível no servidor."}), 400
+    arq = request.files.get("arquivo")
+    if not arq or not arq.filename:
+        return jsonify({"erro": "Selecione um arquivo Excel (.xlsx)."}), 400
+
+    try:
+        raw = arq.read()
+        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+        ws = wb.active
+        linhas = list(ws.iter_rows(values_only=True))
+        if not linhas:
+            return jsonify({"erro": "Planilha vazia."}), 400
+
+        cabecalhos = [str(c).strip() if c is not None else "" for c in linhas[0]]
+        itens_db = db_query("SELECT codigo, titulo, historico_json FROM prass_items")
+        atualizados = 0
+
+        for row in linhas[1:]:
+            if not row or not row[0]:
+                continue
+            titulo_cel = str(row[0]).strip()
+            item_match = next((it for it in itens_db if titulo_cel.startswith(it["codigo"])), None)
+            if not item_match:
+                continue
+
+            cod = item_match["codigo"]
+            hist = json.loads(item_match.get("historico_json") or "{}")
+
+            for col_idx in range(3, len(cabecalhos)):
+                nome_col = cabecalhos[col_idx]
+                if not nome_col or col_idx >= len(row):
+                    continue
+                val_cel = str(row[col_idx]).strip() if row[col_idx] is not None else ""
+                if not val_cel:
+                    continue
+
+                hist[nome_col] = val_cel
+                dem_exist = db_query(
+                    "SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s",
+                    (cod, nome_col)
+                )
+                st_inf = inferir_status_inicial(nome_col, val_cel)
+                res_limpo = "" if val_cel in ("N/A", "Preencher", "Prencher") else val_cel
+
+                if dem_exist:
+                    db_query(
+                        "UPDATE demandas SET resumo_texto = %s, status_planilha = %s WHERE id = %s",
+                        (res_limpo, st_inf, dem_exist[0]["id"]),
+                        fetch=False,
+                        commit=True
+                    )
+                else:
+                    db_query(
+                        """INSERT INTO demandas (item_codigo, nome, tipo, ordem, resumo_texto, status_planilha)
+                           VALUES (%s, %s, %s, %s, %s, %s)""",
+                        (cod, nome_col, "FIXA", 100 + col_idx, res_limpo, st_inf),
+                        fetch=False,
+                        commit=True
+                    )
+            db_query(
+                "UPDATE prass_items SET historico_json = %s WHERE codigo = %s",
+                (json.dumps(hist, ensure_ascii=False), cod),
+                fetch=False,
+                commit=True
+            )
+            atualizados += 1
+
+        return jsonify({"ok": True, "itens_atualizados": atualizados, "colunas": cabecalhos})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"erro": f"Falha ao processar planilha: {e}"}), 500
+
+
 @app.route("/api/exportar-planilha", methods=["GET"])
 def api_exportar_planilha():
-    """
-    Exporta todos os dados preenchidos no sistema exatamente no formato e layout
-    da planilha 'PRASS - Projeto - base inicial.xlsx' (com aba principal + aba de checklists).
-    """
     itens = db_query("SELECT * FROM prass_items ORDER BY codigo")
     todas_demandas = db_query("SELECT * FROM demandas ORDER BY ordem ASC, id ASC")
     todos_chks = db_query("SELECT * FROM checklist_evidencias ORDER BY id ASC")
@@ -1346,7 +1575,7 @@ def api_exportar_planilha():
             nomes_avulsas.append(d["nome"])
 
     colunas_competencias = DEMANDAS_FIXAS_PADRAO + nomes_avulsas
-    cabecalhos = ["Título", "Descrição / Diagnóstico / Medidas Implementadas", "Observações"] + colunas_competencias
+    cabecalhos = ["Título", "Descrição", "Observações"] + colunas_competencias
 
     if HAS_OPENPYXL:
         wb = openpyxl.Workbook()
@@ -1355,6 +1584,9 @@ def api_exportar_planilha():
 
         fill_header = PatternFill(start_color="003366", end_color="003366", fill_type="solid")
         fill_comp = PatternFill(start_color="F2A900", end_color="F2A900", fill_type="solid")
+        fill_verde = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
+        fill_amarelo = PatternFill(start_color="FFFDE7", end_color="FFFDE7", fill_type="solid")
+
         font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
         font_comp = Font(name="Calibri", size=11, bold=True, color="001F3F")
         font_titulo = Font(name="Calibri", size=10, bold=True, color="003366")
@@ -1381,7 +1613,7 @@ def api_exportar_planilha():
             cell.alignment = alinhamento_header
             cell.border = borda_fina
             letra = get_column_letter(col_idx)
-            ws.column_dimensions[letra].width = 36 if col_idx == 1 else (52 if col_idx in (2, 3) else 45)
+            ws.column_dimensions[letra].width = 36 if col_idx == 1 else (52 if col_idx in (2, 3) else 46)
 
         for row_idx, it in enumerate(itens, start=2):
             cod = it["codigo"]
@@ -1390,11 +1622,13 @@ def api_exportar_planilha():
             linha_vals = [it["titulo"], col_b_completa, it["observacoes"]]
 
             mapa_dems = dems_por_item.get(cod, {})
+            status_cols = []
             for nome_c in colunas_competencias:
                 d_row = mapa_dems.get(nome_c)
                 lista_c = chks_por_dem.get(d_row["id"], []) if d_row else []
                 txt_celula = montar_celula_competencia_planilha(d_row, lista_c, hist.get(nome_c, ""))
                 linha_vals.append(txt_celula)
+                status_cols.append((d_row.get("status_planilha") or "Preencher") if d_row else "Preencher")
 
             ws.append(linha_vals)
             ws.row_dimensions[row_idx].height = 180
@@ -1403,37 +1637,45 @@ def api_exportar_planilha():
                 c_cell.font = font_titulo if c_i == 1 else font_corpo
                 c_cell.alignment = alinhamento_topo
                 c_cell.border = borda_fina
+                if c_i >= 4:
+                    st_c = status_cols[c_i - 4]
+                    if st_c.startswith("Finalizado"):
+                        c_cell.fill = fill_verde
+                    elif st_c.startswith("Em Andamento") or st_c.startswith("Parcialmente"):
+                        c_cell.fill = fill_amarelo
 
-        # Segunda Aba: Detalhamento Auditável de Checklists e Anexos
-        ws2 = wb.create_sheet(title="Checklists e Evidências GERED")
-        cab2 = ["Item PRASS", "Demanda / Competência", "Tipo", "Coordenação", "Evidência / Item do Checklist", "Status", "Análise Técnica Registrada", "Arquivos Anexados"]
+        # Aba 2: Resumo de Status por Área e Item
+        ws2 = wb.create_sheet(title="Status GERED por Competência")
+        cab2 = ["Item PRASS", "Competência / Demanda", "Status Geral da Entrega", "Subitem CODER", "Subitem COCAP", "Subitem CONEC", "Texto Consolidado da Célula"]
         ws2.append(cab2)
         ws2.row_dimensions[1].height = 26
-        for c_i, _ in enumerate(cab2, start=1):
+        for c_i in range(1, len(cab2) + 1):
             c_cell = ws2.cell(row=1, column=c_i)
             c_cell.fill = fill_header
             c_cell.font = font_header
             c_cell.alignment = alinhamento_header
-            ws2.column_dimensions[get_column_letter(c_i)].width = 28 if c_i not in (5, 7) else 48
+            ws2.column_dimensions[get_column_letter(c_i)].width = 26 if c_i < 7 else 55
 
         for d in todas_demandas:
-            for c in chks_por_dem.get(d["id"], []):
-                nomes_a = ", ".join(x["nome_arquivo"] for x in c.get("anexos", []))
-                ws2.append([
-                    d["item_codigo"],
-                    d["nome"],
-                    d["tipo"],
-                    c["setor"],
-                    c["titulo"],
-                    "Concluído" if bool(c["concluido"]) else "Pendente",
-                    c.get("analise_evidencia", ""),
-                    nomes_a or "(Sem anexo)"
-                ])
+            dp = {}
+            try:
+                dp = json.loads(d.get("dados_planilha_json") or "{}")
+            except Exception:
+                dp = {}
+            ws2.append([
+                d["item_codigo"],
+                d["nome"],
+                d.get("status_planilha") or "Preencher",
+                (dp.get("CODER") or {}).get("subitem", ""),
+                (dp.get("COCAP") or {}).get("subitem", ""),
+                (dp.get("CONEC") or {}).get("subitem", ""),
+                d.get("resumo_texto") or "Preencher"
+            ])
 
         out = io.BytesIO()
         wb.save(out)
         out.seek(0)
-        nome_arq = f"PRASS_Projeto_GERED_Atualizado_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        nome_arq = f"PRASS_Projeto_GERED_Preenchido_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
         return send_file(
             out,
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1441,7 +1683,6 @@ def api_exportar_planilha():
             download_name=nome_arq
         )
 
-    # Fallback HTML/Excel caso openpyxl não esteja instalado no container
     ths = "".join(f"<th style='background:#003366;color:#FFF;padding:8px;'>{h}</th>" for h in cabecalhos)
     trs = ""
     for it in itens:
@@ -1463,7 +1704,7 @@ def api_exportar_planilha():
         io.BytesIO(("\ufeff" + html_xls).encode("utf-8")),
         mimetype="application/vnd.ms-excel",
         as_attachment=True,
-        download_name="PRASS_Projeto_GERED_Atualizado.xls"
+        download_name="PRASS_Projeto_GERED_Preenchido.xls"
     )
 
 
@@ -1495,8 +1736,8 @@ def api_criar_demanda():
         existe = db_query("SELECT id FROM demandas WHERE item_codigo = %s AND nome = %s", (c, nome))
         if not existe:
             db_query(
-                "INSERT INTO demandas (item_codigo, nome, tipo, ordem, resumo_texto) VALUES (%s, %s, %s, %s, %s)",
-                (c, nome, "AVULSA", 500, ""),
+                "INSERT INTO demandas (item_codigo, nome, tipo, ordem, resumo_texto, status_planilha) VALUES (%s, %s, %s, %s, %s, %s)",
+                (c, nome, "AVULSA", 500, "", "Em Andamento / Em Implementação"),
                 fetch=False,
                 commit=True
             )
@@ -1507,26 +1748,28 @@ def api_criar_demanda():
 def api_salvar_resumo_demanda(demanda_id):
     body = request.get_json(force=True)
     resumo_texto = body.get("resumo_texto", "").strip()
+    status_planilha = body.get("status_planilha")
 
-    dem = db_query("SELECT oficio_texto FROM demandas WHERE id = %s", (demanda_id,))
+    dem = db_query("SELECT oficio_texto, status_planilha FROM demandas WHERE id = %s", (demanda_id,))
     oficio_atual = (dem[0].get("oficio_texto") or "").strip() if dem else ""
+    st_atual = status_planilha if status_planilha else ((dem[0].get("status_planilha") or "Preencher") if dem else "Preencher")
 
     if oficio_atual:
         oficio_sincronizado = atualizar_bloco_resumo_no_oficio_salvo(oficio_atual, resumo_texto)
         db_query(
-            "UPDATE demandas SET resumo_texto = %s, oficio_texto = %s WHERE id = %s",
-            (resumo_texto, oficio_sincronizado, demanda_id),
+            "UPDATE demandas SET resumo_texto = %s, oficio_texto = %s, status_planilha = %s WHERE id = %s",
+            (resumo_texto, oficio_sincronizado, st_atual, demanda_id),
             fetch=False,
             commit=True
         )
     else:
         db_query(
-            "UPDATE demandas SET resumo_texto = %s WHERE id = %s",
-            (resumo_texto, demanda_id),
+            "UPDATE demandas SET resumo_texto = %s, status_planilha = %s WHERE id = %s",
+            (resumo_texto, st_atual, demanda_id),
             fetch=False,
             commit=True
         )
-    return jsonify({"ok": True, "resumo_texto": resumo_texto})
+    return jsonify({"ok": True, "resumo_texto": resumo_texto, "status_planilha": st_atual})
 
 
 @app.route("/api/checklist/<int:demanda_id>", methods=["GET"])
@@ -1535,6 +1778,11 @@ def api_listar_checklist(demanda_id):
     if not dem:
         return jsonify({"erro": "Demanda não encontrada."}), 404
     dem_row = dem[0]
+    try:
+        dem_row["dados_planilha"] = json.loads(dem_row.get("dados_planilha_json") or "{}")
+    except Exception:
+        dem_row["dados_planilha"] = {}
+
     it_row = db_query("SELECT * FROM prass_items WHERE codigo = %s", (dem_row["item_codigo"],))[0]
 
     chks = db_query(
@@ -1803,7 +2051,7 @@ def api_exportar_word(demanda_id):
             continue
         if l_strip.startswith("---"):
             paragrafos_html += "<hr style='border:0;border-top:1px solid #CBD5E1;margin:12pt 0;'>"
-        elif l_strip.startswith(("RESPOSTA AO OFÍCIO", "ITEM DO PRASS:", "1.", "2.", "Evidência(s)", "Situação:")):
+        elif l_strip.startswith(("RESPOSTA AO OFÍCIO", "ITEM DO PRASS:", "STATUS NA PLANILHA", "1.", "2.", "Evidência(s)", "Situação:")):
             paragrafos_html += f"<p style='font-weight:bold;color:#003366;margin-top:10pt;margin-bottom:4pt;'>{l_strip}</p>"
         else:
             paragrafos_html += f"<p style='text-align:justify;margin-top:2pt;margin-bottom:6pt;'>{l_strip}</p>"
@@ -1917,7 +2165,7 @@ def api_exportar_pdf_unificado(demanda_id):
 
 
 # ==============================================================================
-# FRONTEND WEB COMPLETO EMBUTIDO (HTML5 + CSS3 + JAVASCRIPT)
+# FRONTEND WEB COMPLETO COM 2 MÓDULOS INTEGRADOS (EVIDÊNCIAS + PLANILHA PRASS)
 # ==============================================================================
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1952,43 +2200,67 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     header {
         background: linear-gradient(90deg, var(--azul-escuro) 0%, var(--azul-postal) 100%);
         color: #FFF;
-        padding: 12px 24px;
+        padding: 10px 22px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         border-bottom: 4px solid var(--amarelo-postal);
         flex-shrink: 0;
+        flex-wrap: wrap;
+        gap: 12px;
     }
-    .brand-title { font-size: 18px; font-weight: 800; letter-spacing: 0.3px; }
-    .brand-sub { font-size: 12px; color: #FFD100; margin-top: 2px; }
-    .header-right { display: flex; align-items: center; gap: 10px; }
-    .btn-export-excel {
-        background: #107C41;
-        color: #FFFFFF;
-        border: 1px solid #34D399;
+    .brand-title { font-size: 17px; font-weight: 800; letter-spacing: 0.3px; }
+    .brand-sub { font-size: 11.5px; color: #FFD100; margin-top: 2px; }
+    .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .module-tabs {
+        display: flex;
+        background: rgba(0,0,0,0.25);
+        padding: 4px;
+        border-radius: 8px;
+        gap: 4px;
+    }
+    .tab-top-btn {
+        border: none;
+        background: transparent;
+        color: #E2E8F0;
         padding: 7px 14px;
         border-radius: 6px;
         font-size: 12.5px;
         font-weight: 800;
         cursor: pointer;
+        transition: all 0.15s;
+    }
+    .tab-top-btn.active {
+        background: var(--amarelo-postal);
+        color: var(--azul-escuro);
+    }
+    .btn-export-excel {
+        background: #107C41;
+        color: #FFFFFF;
+        border: 1px solid #34D399;
+        padding: 7px 13px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 800;
+        cursor: pointer;
         text-decoration: none;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
+        gap: 5px;
     }
     .btn-export-excel:hover { background: #0E6A37; }
     .db-badge {
         background: rgba(255,255,255,0.12);
         border: 1px solid rgba(255,255,255,0.25);
-        padding: 6px 12px;
+        padding: 6px 10px;
         border-radius: 6px;
-        font-size: 12px;
+        font-size: 11.5px;
         font-weight: 600;
         cursor: pointer;
     }
     .main-container { display: flex; flex: 1; overflow: hidden; }
     .sidebar {
-        width: 390px;
+        width: 375px;
         background: #FFFFFF;
         border-right: 1px solid var(--cinza-borda);
         display: flex;
@@ -1996,12 +2268,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         flex-shrink: 0;
     }
     .sidebar-header {
-        padding: 14px 16px;
+        padding: 12px 16px;
         background: #F8FAFC;
         border-bottom: 1px solid var(--cinza-borda);
         font-weight: 700;
         color: var(--azul-postal);
-        font-size: 13px;
+        font-size: 12.5px;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -2010,8 +2282,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .prass-item-card {
         border: 1px solid #E2E8F0;
         border-radius: 8px;
-        padding: 12px;
-        margin-bottom: 10px;
+        padding: 11px;
+        margin-bottom: 9px;
         cursor: pointer;
         transition: all 0.15s ease;
         background: #FFFFFF;
@@ -2029,24 +2301,24 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         font-size: 11px;
         padding: 2px 8px;
         border-radius: 4px;
-        margin-bottom: 6px;
+        margin-bottom: 5px;
     }
     .prass-item-card.active .item-code-badge {
         background: var(--amarelo-postal);
         color: var(--azul-escuro);
     }
     .item-title-short {
-        font-size: 12.5px;
+        font-size: 12px;
         font-weight: 700;
         color: #1E293B;
         line-height: 1.35;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
     }
-    .semaforo-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .semaforo-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
     .area-pill {
-        font-size: 10.5px;
+        font-size: 10px;
         font-weight: 700;
-        padding: 2px 8px;
+        padding: 2px 7px;
         border-radius: 12px;
         display: inline-flex;
         align-items: center;
@@ -2059,19 +2331,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .workspace {
         flex: 1;
         overflow-y: auto;
-        padding: 18px 24px;
+        padding: 16px 22px;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 14px;
     }
     .top-item-banner {
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
         border-radius: 10px;
-        padding: 16px 20px;
+        padding: 15px 18px;
     }
-    .banner-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-    .banner-title { font-size: 16px; font-weight: 800; color: var(--azul-postal); line-height: 1.35; }
+    .banner-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+    .banner-title { font-size: 15.5px; font-weight: 800; color: var(--azul-postal); line-height: 1.35; }
     .banner-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
     .dropdown-areas { position: relative; display: inline-block; }
     .dropdown-btn {
@@ -2107,17 +2379,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         padding: 5px 0;
         cursor: pointer;
     }
-    .planilha-buttons-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    .planilha-buttons-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
     .btn-info-planilha {
         flex: 1;
-        min-width: 220px;
-        padding: 9px 14px;
+        min-width: 210px;
+        padding: 8px 12px;
         border-radius: 7px;
         border: 1px solid #CBD5E1;
         background: #F8FAFC;
         color: #1E293B;
         font-weight: 700;
-        font-size: 12.5px;
+        font-size: 12px;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -2130,16 +2402,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     .info-drawer {
         display: none;
-        margin-top: 12px;
+        margin-top: 10px;
         background: #F8FAFC;
         border-left: 4px solid var(--azul-postal);
         border-radius: 6px;
-        padding: 14px 18px;
-        font-size: 13px;
+        padding: 12px 16px;
+        font-size: 12.5px;
         line-height: 1.55;
         white-space: pre-wrap;
         color: #1E293B;
-        max-height: 280px;
+        max-height: 250px;
         overflow-y: auto;
     }
     .info-drawer.open { display: block; }
@@ -2147,21 +2419,21 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
         border-radius: 10px;
-        padding: 14px 20px;
+        padding: 12px 18px;
         display: flex;
         flex-wrap: wrap;
-        gap: 18px;
+        gap: 14px;
         align-items: center;
         justify-content: space-between;
     }
     .control-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .control-label { font-size: 12px; font-weight: 800; text-transform: uppercase; color: #475569; }
+    .control-label { font-size: 11.5px; font-weight: 800; text-transform: uppercase; color: #475569; }
     .seg-btn {
-        padding: 7px 14px;
+        padding: 6px 12px;
         border-radius: 6px;
         border: 1px solid var(--cinza-borda);
         background: #F8FAFC;
-        font-size: 12.5px;
+        font-size: 12px;
         font-weight: 700;
         cursor: pointer;
         color: #334155;
@@ -2172,20 +2444,20 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         border-color: var(--azul-postal);
     }
     select.select-demanda {
-        padding: 7px 12px;
+        padding: 6px 10px;
         border-radius: 6px;
         border: 1px solid var(--azul-postal);
-        font-size: 13px;
+        font-size: 12.5px;
         font-weight: 700;
         color: var(--azul-postal);
         background: #FFF;
-        min-width: 220px;
+        min-width: 210px;
     }
     .setor-btn {
-        padding: 8px 18px;
+        padding: 7px 15px;
         border-radius: 7px;
         border: 2px solid transparent;
-        font-size: 13px;
+        font-size: 12.5px;
         font-weight: 800;
         cursor: pointer;
         background: #E2E8F0;
@@ -2201,7 +2473,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         border: 1px solid #93C5FD;
         border-left: 5px solid var(--azul-postal);
         border-radius: 8px;
-        padding: 14px 16px;
+        padding: 12px 14px;
         display: flex;
         flex-direction: column;
         gap: 8px;
@@ -2209,7 +2481,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .resumo-header-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
     .resumo-textarea {
         width: 100%;
-        min-height: 110px;
+        min-height: 100px;
         padding: 10px 12px;
         border: 1px solid #CBD5E1;
         border-radius: 6px;
@@ -2224,7 +2496,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         background: #FFFFFF;
         border: 1px solid var(--cinza-borda);
         border-radius: 10px;
-        padding: 18px 20px;
+        padding: 16px 18px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -2233,7 +2505,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .progress-wrap { flex: 1; min-width: 260px; }
     .progress-bar-outer {
         width: 100%;
-        height: 12px;
+        height: 11px;
         background: #E2E8F0;
         border-radius: 6px;
         overflow: hidden;
@@ -2259,36 +2531,36 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         background: var(--azul-postal);
         color: #FFF;
         border: none;
-        padding: 8px 14px;
+        padding: 7px 13px;
         border-radius: 6px;
         font-weight: 700;
-        font-size: 12.5px;
+        font-size: 12px;
         cursor: pointer;
     }
     .btn-success {
         background: var(--verde);
         color: #FFF;
         border: none;
-        padding: 8px 14px;
+        padding: 7px 13px;
         border-radius: 6px;
         font-weight: 700;
-        font-size: 12.5px;
+        font-size: 12px;
         cursor: pointer;
     }
     .btn-warning {
         background: var(--amarelo-postal);
         color: var(--azul-escuro);
         border: none;
-        padding: 8px 14px;
+        padding: 7px 13px;
         border-radius: 6px;
         font-weight: 800;
-        font-size: 12.5px;
+        font-size: 12px;
         cursor: pointer;
     }
     .chk-item-card {
         border: 1px solid #E2E8F0;
         border-radius: 8px;
-        padding: 12px 14px;
+        padding: 11px 14px;
         background: #FFFFFF;
         display: flex;
         flex-direction: column;
@@ -2298,7 +2570,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .chk-item-card.pendente { border-left: 5px solid var(--vermelho); }
     .chk-top-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
     .chk-title-group { display: flex; align-items: center; gap: 10px; flex: 1; }
-    .chk-title-text { font-size: 13.5px; font-weight: 700; color: #0F172A; }
+    .chk-title-text { font-size: 13px; font-weight: 700; color: #0F172A; }
     .chk-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .tool-btn {
         border: 1px solid #CBD5E1;
@@ -2315,7 +2587,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .anexos-box {
         background: #F8FAFC;
         border-radius: 6px;
-        padding: 8px 10px;
+        padding: 7px 10px;
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
@@ -2332,6 +2604,57 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
         gap: 6px;
     }
     .anexo-chip a { text-decoration: none; font-weight: 700; color: var(--azul-postal); }
+
+    /* ESTILOS DO MÓDULO 2: PREENCHIMENTO DA PLANILHA PRASS */
+    .grid-3-setores {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+        gap: 12px;
+    }
+    .setor-form-card {
+        background: #F8FAFC;
+        border: 1px solid #CBD5E1;
+        border-top: 4px solid var(--azul-postal);
+        border-radius: 8px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .field-lbl { font-size: 11.5px; font-weight: 700; color: #334155; }
+    .input-std, .select-std {
+        width: 100%;
+        padding: 7px 10px;
+        border: 1px solid #CBD5E1;
+        border-radius: 6px;
+        font-size: 12.5px;
+        background: #FFF;
+    }
+    .matriz-table-wrap {
+        overflow-x: auto;
+        border: 1px solid #CBD5E1;
+        border-radius: 8px;
+    }
+    table.matriz-prass {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+    table.matriz-prass th {
+        background: var(--azul-postal);
+        color: #FFF;
+        padding: 8px 10px;
+        text-align: left;
+        border: 1px solid #CBD5E1;
+        white-space: nowrap;
+    }
+    table.matriz-prass td {
+        padding: 8px 10px;
+        border: 1px solid #E2E8F0;
+        vertical-align: top;
+    }
+    table.matriz-prass tr:hover { background: #F1F5F9; cursor: pointer; }
+
     .modal-backdrop {
         display: none;
         position: fixed;
@@ -2388,13 +2711,29 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <header>
     <div>
         <div class="brand-title">POSTAL SAÚDE | SISTEMA DE AUTOMAÇÃO PRASS — GERED</div>
-        <div class="brand-sub">Módulos 8.1.2 a 8.6.1 • Coordenações CODER, COCAP e CONEC • Resumo + Ofício Persistente + Exportação Excel e PDF</div>
+        <div class="brand-sub">Módulos 8.1.2 a 8.6.1 • Coordenações CODER, COCAP e CONEC • Evidências + Módulo de Preenchimento da Planilha PRASS</div>
     </div>
+
+    <div class="module-tabs">
+        <button class="tab-top-btn active" id="tabBtnModulo1" onclick="alternarModulo('MODULO1')">
+            📋 1. Checklist, Resumo & Ofício PDF
+        </button>
+        <button class="tab-top-btn" id="tabBtnModulo2" onclick="alternarModulo('MODULO2')">
+            📊 2. Preenchimento da Planilha PRASS
+        </button>
+    </div>
+
     <div class="header-right">
-        <a href="/api/exportar-planilha" class="btn-export-excel" title="Baixar Planilha Excel formatada igual ao modelo PRASS com tudo o que foi preenchido no sistema">
+        <button class="tool-btn" onclick="acionarImportacaoPlanilha()" title="Subir planilha .xlsx do computador para atualizar dados">
+            📤 Importar .xlsx
+        </button>
+        <a href="/api/exportar-planilha" class="btn-export-excel">
             📊 Exportar Planilha PRASS (.xlsx)
         </a>
-        <div class="db-badge" id="dbBadge" onclick="verDiagnosticoBanco()">Conectando ao Banco...</div>
+        <button class="tool-btn" onclick="executarResetReparo()" title="Sincronizar e reparar estrutura do banco sem apagar anexos">
+            🛠️ Reset / Sincronizar
+        </button>
+        <div class="db-badge" id="dbBadge" onclick="verDiagnosticoBanco()">Conectando...</div>
     </div>
 </header>
 
@@ -2408,6 +2747,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </aside>
 
     <main class="workspace">
+        <!-- BANNER FIXO DO ITEM SELECIONADO -->
         <section class="top-item-banner">
             <div class="banner-header-row">
                 <div>
@@ -2449,6 +2789,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             <div class="info-drawer" id="drawerContent"></div>
         </section>
 
+        <!-- BARRA DE SELEÇÃO DE COMPETÊNCIA / DEMANDA E SETOR -->
         <section class="controls-bar">
             <div class="control-group">
                 <span class="control-label">Tipo:</span>
@@ -2457,12 +2798,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
 
             <div class="control-group">
-                <span class="control-label">Competência / Demanda:</span>
+                <span class="control-label">Competência / Coluna da Planilha:</span>
                 <select class="select-demanda" id="selectDemanda" onchange="aoMudarDemanda()"></select>
                 <button class="btn-primary" onclick="criarNovaDemandaAvulsa()">+ Nova Demanda</button>
             </div>
 
-            <div class="control-group">
+            <div class="control-group" id="grupoBotoesSetor">
                 <span class="control-label">Setor (GERED):</span>
                 <button class="setor-btn" id="btnSetorCODER" onclick="selecionarSetor('CODER')">CODER</button>
                 <button class="setor-btn active" id="btnSetorCOCAP" onclick="selecionarSetor('COCAP')">COCAP</button>
@@ -2470,28 +2811,28 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
             </div>
         </section>
 
-        <section class="checklist-panel">
-            <!-- CAIXINHA DE RESUMO ANTES DAS EVIDÊNCIAS -->
+        <!-- ================================================================== -->
+        <!-- VISÃO DO MÓDULO 1: CAIXINHA DE RESUMO + CHECKLIST DE EVIDÊNCIAS    -->
+        <!-- ================================================================== -->
+        <section class="checklist-panel" id="painelModulo1">
             <div class="resumo-before-box">
                 <div class="resumo-header-line">
-                    <div>
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                         <span style="font-size:13.5px; font-weight:800; color:var(--azul-postal);">
-                            📝 Resumo Executivo / Considerações Iniciais (Antes das Evidências)
+                            📝 Resumo Executivo / Texto da Célula da Planilha (Antes das Evidências)
                         </span>
-                        <span style="font-size:11.5px; color:#475569; margin-left:6px;">
-                            • Sai na Seção 1 do Ofício e na coluna da Competência ao exportar a Planilha PRASS.
-                        </span>
+                        <select id="selectStatusRapidoM1" class="select-std" style="width:auto; font-weight:700; color:var(--azul-postal);" onchange="salvarResumoDemanda(false)"></select>
                     </div>
                     <div style="display:flex; gap:6px; align-items:center;">
                         <span id="statusResumoSalvo" style="font-size:11.5px; color:var(--verde); font-weight:700;"></span>
-                        <button class="tool-btn" onclick="importarResumoPlanilhaBase()">📥 Puxar Texto da Planilha Base</button>
+                        <button class="tool-btn" onclick="importarResumoPlanilhaBase()">📥 Puxar Texto Base da Planilha</button>
                         <button class="btn-primary" style="padding:5px 12px; font-size:12px;" onclick="salvarResumoDemanda(true)">💾 Salvar Resumo</button>
                     </div>
                 </div>
                 <textarea
                     id="textareaResumoDemanda"
                     class="resumo-textarea"
-                    placeholder="Digite aqui o resumo geral deste item do PRASS antes das evidências..."
+                    placeholder="Digite aqui o resumo geral deste item do PRASS antes das evidências (sai na Seção 1 do Ofício e na célula correspondente da Planilha PRASS)..."
                     onblur="salvarResumoDemanda(false)"
                 ></textarea>
             </div>
@@ -2518,9 +2859,119 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
             <div id="listaChecklistContainer" style="display:flex; flex-direction:column; gap:10px;"></div>
         </section>
+
+        <!-- ================================================================== -->
+        <!-- VISÃO DO MÓDULO 2: PREENCHIMENTO ESTRUTURADO DA PLANILHA PRASS     -->
+        <!-- ================================================================== -->
+        <section class="checklist-panel" id="painelModulo2" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; border-bottom:1px solid #E2E8F0; padding-bottom:10px;">
+                <div>
+                    <h3 style="color:var(--azul-postal); font-size:15.5px;">
+                        📊 Módulo de Preenchimento Direto da Planilha PRASS — <span id="lblItemCompetenciaM2"></span>
+                    </h3>
+                    <p style="font-size:12px; color:#475569; margin-top:2px;">
+                        Preencha o status (ex.: Finalizado, Em Andamento, Preencher) e os campos de cada coordenação da GERED. Tudo será exportado formatado na planilha .xlsx.
+                    </p>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <span id="msgSalvoPlanilhaM2" style="font-size:12px; font-weight:700; color:var(--verde);"></span>
+                    <button class="tool-btn" onclick="consolidarSetoresNaCelula()">⚡ Juntar CODER + COCAP + CONEC no Texto Final</button>
+                    <button class="btn-success" onclick="salvarModuloPlanilha(true)">💾 Salvar Preenchimento da Planilha</button>
+                </div>
+            </div>
+
+            <!-- STATUS GERAL DA ENTREGA NA COMPETÊNCIA -->
+            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; background:#F8FAFC; padding:12px; border-radius:8px; border:1px solid #CBD5E1;">
+                <div style="flex:1; min-width:240px;">
+                    <label class="field-lbl">Status Geral desta Competência na Planilha PRASS:</label>
+                    <select id="selStatusGeralM2" class="select-std" style="margin-top:4px; font-weight:800; color:var(--azul-postal);" onchange="salvarModuloPlanilha(false)"></select>
+                </div>
+                <div style="flex:2; min-width:300px;">
+                    <label class="field-lbl">Atalhos Rápidos de Status:</label>
+                    <div style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                        <button class="tool-btn concluir-on" onclick="definirStatusRapidoM2('Finalizado / Concluído')">✅ Marcar como Finalizado</button>
+                        <button class="tool-btn" onclick="definirStatusRapidoM2('Em Andamento / Em Implementação')">🟡 Em Andamento</button>
+                        <button class="tool-btn" onclick="definirStatusRapidoM2('Aguardando Área Técnica (GETEC / GECOF / GEREL)')">⏳ Aguardando TI / Outra Área</button>
+                        <button class="tool-btn" onclick="definirStatusRapidoM2('Preencher')">📋 Preencher</button>
+                        <button class="tool-btn" onclick="definirStatusRapidoM2('N/A (Não Aplicável)')">⚪ N/A</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CARDS DAS 3 COORDENAÇÕES (CODER, COCAP, CONEC) -->
+            <div class="grid-3-setores">
+                <!-- CODER -->
+                <div class="setor-form-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <b style="color:var(--azul-postal); font-size:13.5px;">🏢 GERED / CODER</b>
+                        <select id="selStatus_CODER" class="select-std" style="width:auto; font-size:11.5px; font-weight:700;"></select>
+                    </div>
+                    <label class="field-lbl">Subitem / Frente CODER:</label>
+                    <input type="text" id="inpSubitem_CODER" class="input-std" list="dlSub_CODER" placeholder="Ex: Vulnerabilidade de Rede / Garantia de Atendimento">
+                    <datalist id="dlSub_CODER"></datalist>
+                    <label class="field-lbl">Chamados GLPI / Normativos / BI:</label>
+                    <input type="text" id="inpRef_CODER" class="input-std" placeholder="Ex: Painel BI, MAN 037, POP 009, IOT 222, IOT 224">
+                    <label class="field-lbl">Considerações / Resposta da CODER:</label>
+                    <textarea id="txtResp_CODER" class="resumo-textarea" style="min-height:90px;" placeholder="Digite o posicionamento da CODER para esta competência..."></textarea>
+                </div>
+
+                <!-- COCAP -->
+                <div class="setor-form-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <b style="color:var(--azul-postal); font-size:13.5px;">🏢 GERED / COCAP</b>
+                        <select id="selStatus_COCAP" class="select-std" style="width:auto; font-size:11.5px; font-weight:700;"></select>
+                    </div>
+                    <label class="field-lbl">Subitem / Frente COCAP:</label>
+                    <input type="text" id="inpSubitem_COCAP" class="input-std" list="dlSub_COCAP" placeholder="Ex: Bases de rede / RN 486 art. 2º / RN 567 art. 11">
+                    <datalist id="dlSub_COCAP"></datalist>
+                    <label class="field-lbl">Chamados GLPI / Relatórios Benner / IOTs:</label>
+                    <input type="text" id="inpRef_COCAP" class="input-std" placeholder="Ex: GLPI 31043, 30182, 30999, 30992, 31012, Benner 988">
+                    <label class="field-lbl">Considerações / Resposta da COCAP:</label>
+                    <textarea id="txtResp_COCAP" class="resumo-textarea" style="min-height:90px;" placeholder="Digite o posicionamento da COCAP para esta competência..."></textarea>
+                </div>
+
+                <!-- CONEC -->
+                <div class="setor-form-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <b style="color:var(--azul-postal); font-size:13.5px;">🏢 GERED / CONEC</b>
+                        <select id="selStatus_CONEC" class="select-std" style="width:auto; font-size:11.5px; font-weight:700;"></select>
+                    </div>
+                    <label class="field-lbl">Subitem / Frente CONEC:</label>
+                    <input type="text" id="inpSubitem_CONEC" class="input-std" list="dlSub_CONEC" placeholder="Ex: Atualização MAN006 e IOT036 / Suspensões">
+                    <datalist id="dlSub_CONEC"></datalist>
+                    <label class="field-lbl">Normativos / Acordos / Processos:</label>
+                    <input type="text" id="inpRef_CONEC" class="input-std" placeholder="Ex: MAN 006 (DocSpider), IOT 036.07, IOT 031, Acordos">
+                    <label class="field-lbl">Considerações / Resposta da CONEC:</label>
+                    <textarea id="txtResp_CONEC" class="resumo-textarea" style="min-height:90px;" placeholder="Digite o posicionamento da CONEC para esta competência..."></textarea>
+                </div>
+            </div>
+
+            <!-- TEXTO CONSOLIDADO FINAL DA CÉLULA DA PLANILHA -->
+            <div class="resumo-before-box">
+                <div class="resumo-header-line">
+                    <span style="font-size:13px; font-weight:800; color:var(--azul-postal);">
+                        📄 Texto Consolidado da Célula (Como sairá na coluna "<span id="lblColunaExportM2"></span>" da Planilha Excel e no Resumo do Ofício):
+                    </span>
+                    <div style="display:flex; gap:6px;">
+                        <button class="tool-btn" onclick="importarResumoPlanilhaBase()">📥 Restaurar Texto Original da Planilha</button>
+                        <button class="btn-primary" onclick="salvarModuloPlanilha(true)">💾 Salvar Tudo</button>
+                    </div>
+                </div>
+                <textarea id="textareaConsolidadoM2" class="resumo-textarea" style="min-height:120px;" onblur="salvarModuloPlanilha(false)"></textarea>
+            </div>
+
+            <!-- MATRIZ PANORÂMICA DE TODAS AS COMPETÊNCIAS DOS 9 ITENS -->
+            <div style="margin-top:6px;">
+                <h4 style="color:var(--azul-postal); font-size:14px; margin-bottom:8px;">
+                    🗂️ Visão Panorâmica da Planilha PRASS (Clique em qualquer linha para abrir e editar o Item):
+                </h4>
+                <div class="matriz-table-wrap" id="tabelaMatrizContainer"></div>
+            </div>
+        </section>
     </main>
 </div>
 
+<!-- MODAL DO OFÍCIO -->
 <div class="modal-backdrop" id="modalOficio">
     <div class="modal-window">
         <div class="modal-header">
@@ -2555,9 +3006,13 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </div>
 
 <input type="file" id="hiddenFileInput" multiple style="display:none" onchange="executarUploadAnexos()">
+<input type="file" id="hiddenXlsxInput" accept=".xlsx,.xls" style="display:none" onchange="executarImportacaoXlsx()">
 
 <script>
 let ESTADO_ITENS = [];
+let OPCOES_STATUS = [];
+let SUBITENS_SUGERIDOS = {};
+let MODULO_ATIVO = 'MODULO1';
 let ITEM_ATUAL = null;
 let TIPO_DEMANDA_ATUAL = 'FIXA';
 let DEMANDA_ATUAL_ID = null;
@@ -2566,6 +3021,17 @@ let SETOR_ATUAL = 'COCAP';
 let DRAWER_ABERTO = null;
 let CHECKLIST_ATUAL = [];
 let CHK_ID_PARA_UPLOAD = null;
+
+function alternarModulo(qual) {
+    MODULO_ATIVO = qual;
+    document.getElementById('tabBtnModulo1').classList.toggle('active', qual === 'MODULO1');
+    document.getElementById('tabBtnModulo2').classList.toggle('active', qual === 'MODULO2');
+    document.getElementById('painelModulo1').style.display = (qual === 'MODULO1') ? 'flex' : 'none';
+    document.getElementById('painelModulo2').style.display = (qual === 'MODULO2') ? 'flex' : 'none';
+    if (qual === 'MODULO2') {
+        renderizarMatrizPanoramica();
+    }
+}
 
 async function verDiagnosticoBanco() {
     const r = await fetch('/api/diagnostico', { cache: 'no-store' });
@@ -2578,15 +3044,74 @@ async function verDiagnosticoBanco() {
     );
 }
 
+async function executarResetReparo() {
+    if (!confirm('Deseja sincronizar/reparar a estrutura do banco e restaurar os textos base vazios (sem apagar seus anexos)?')) return;
+    const r = await fetch('/api/reset-reparo', { method: 'POST' });
+    const d = await r.json();
+    alert(d.mensagem || d.erro || 'Concluído');
+    await carregarSistema();
+}
+
+function acionarImportacaoPlanilha() {
+    const inp = document.getElementById('hiddenXlsxInput');
+    inp.value = '';
+    inp.click();
+}
+
+async function executarImportacaoXlsx() {
+    const inp = document.getElementById('hiddenXlsxInput');
+    if (!inp.files || !inp.files.length) return;
+    const fd = new FormData();
+    fd.append('arquivo', inp.files[0]);
+    const r = await fetch('/api/planilha/importar-xlsx', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.erro) {
+        alert('Erro: ' + d.erro);
+    } else {
+        alert(`Planilha importada com sucesso! ${d.itens_atualizados} itens do PRASS sincronizados.`);
+        await carregarSistema();
+    }
+}
+
+function inicializarSelectsStatus() {
+    const ids = ['selectStatusRapidoM1', 'selStatusGeralM2', 'selStatus_CODER', 'selStatus_COCAP', 'selStatus_CONEC'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.innerHTML = '';
+        OPCOES_STATUS.forEach(st => {
+            const o = document.createElement('option');
+            o.value = st;
+            o.textContent = st;
+            el.appendChild(o);
+        });
+    });
+
+    ['CODER', 'COCAP', 'CONEC'].forEach(s => {
+        const dl = document.getElementById('dlSub_' + s);
+        if (!dl) return;
+        dl.innerHTML = '';
+        (SUBITENS_SUGERIDOS[s] || []).forEach(txt => {
+            const o = document.createElement('option');
+            o.value = txt;
+            dl.appendChild(o);
+        });
+    });
+}
+
 async function carregarSistema() {
     try {
         const resp = await fetch(`/api/bootstrap?demanda_nome=${encodeURIComponent(DEMANDA_ATUAL_NOME)}`, { cache: 'no-store' });
         const dados = await resp.json();
         if (!resp.ok || dados.erro) throw new Error(dados.erro || 'Falha HTTP ' + resp.status);
         ESTADO_ITENS = dados.itens;
+        OPCOES_STATUS = dados.opcoes_status_planilha || [];
+        SUBITENS_SUGERIDOS = dados.subitens_sugeridos || {};
+
+        inicializarSelectsStatus();
 
         const badge = document.getElementById('dbBadge');
-        badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Railway Ativo' : '🟢 Banco Persistente Ativo';
+        badge.textContent = dados.postgres_ativo ? '🟢 PostgreSQL Ativo' : '🟢 Banco Ativo';
 
         if (!ITEM_ATUAL && ESTADO_ITENS.length > 0) {
             ITEM_ATUAL = ESTADO_ITENS.find(i => i.codigo === '8.5.1') || ESTADO_ITENS[0];
@@ -2596,6 +3121,7 @@ async function carregarSistema() {
 
         renderizarSidebar();
         renderizarItemAtual();
+        if (MODULO_ATIVO === 'MODULO2') renderizarMatrizPanoramica();
     } catch (e) {
         console.error(e);
         document.getElementById('dbBadge').textContent = '🔴 Erro: ' + e.message;
@@ -2616,7 +3142,11 @@ function renderizarSidebar() {
             renderizarItemAtual();
         };
 
-        let badgesHtml = '';
+        const demComp = (item.demandas || []).find(d => d.nome === DEMANDA_ATUAL_NOME);
+        const stPlan = demComp ? (demComp.status_planilha || 'Preencher') : 'Preencher';
+        const corSt = stPlan.startsWith('Finalizado') ? 'VERDE' : (stPlan === 'Preencher' ? 'VERMELHO' : 'AMARELO');
+
+        let badgesHtml = `<span class="area-pill ${corSt}" title="Status na Planilha">📊 ${stPlan.split('/')[0].trim()}</span>`;
         ['CODER', 'COCAP', 'CONEC'].forEach(setor => {
             const st = item.semaforo && item.semaforo[setor];
             if (!item.areas_atribuidas.includes(setor)) {
@@ -2719,7 +3249,7 @@ function populaSelectDemandas() {
     filtradas.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.id;
-        opt.textContent = d.nome;
+        opt.textContent = `${d.nome} [${(d.status_planilha || 'Preencher').split('/')[0].trim()}]`;
         if (d.nome === DEMANDA_ATUAL_NOME) opt.selected = true;
         sel.appendChild(opt);
     });
@@ -2770,16 +3300,21 @@ function selecionarSetor(setor) {
 async function salvarResumoDemanda(mostrarAlerta) {
     if (!DEMANDA_ATUAL_ID) return;
     const texto = document.getElementById('textareaResumoDemanda').value;
+    const stPlan = document.getElementById('selectStatusRapidoM1').value;
+    document.getElementById('textareaConsolidadoM2').value = texto;
+    document.getElementById('selStatusGeralM2').value = stPlan;
+
     const resp = await fetch(`/api/demanda/${DEMANDA_ATUAL_ID}/resumo`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ resumo_texto: texto })
+        body: JSON.stringify({ resumo_texto: texto, status_planilha: stPlan })
     });
     if (resp.ok) {
         const lbl = document.getElementById('statusResumoSalvo');
-        lbl.textContent = '✔ Resumo salvo!';
-        setTimeout(() => { lbl.textContent = ''; }, 3000);
-        if (mostrarAlerta) alert('Resumo executivo salvo e sincronizado na Seção 1 do Ofício!');
+        lbl.textContent = '✔ Salvo!';
+        setTimeout(() => { lbl.textContent = ''; }, 2500);
+        if (mostrarAlerta) alert('Resumo e Status salvos e sincronizados com o Ofício e com a Planilha!');
+        await carregarSistema();
     }
 }
 
@@ -2790,9 +3325,8 @@ async function importarResumoPlanilhaBase() {
         alert('Não há texto histórico pré-cadastrado na planilha inicial para "' + DEMANDA_ATUAL_NOME + '".');
         return;
     }
-    const atual = document.getElementById('textareaResumoDemanda').value.trim();
-    if (atual && !confirm('Substituir o texto atual da caixinha pelo texto da planilha base?')) return;
     document.getElementById('textareaResumoDemanda').value = histTxt;
+    document.getElementById('textareaConsolidadoM2').value = histTxt;
     await salvarResumoDemanda(false);
 }
 
@@ -2803,9 +3337,148 @@ async function carregarChecklistDemanda() {
     CHECKLIST_ATUAL = dados.checklist || [];
     ITEM_ATUAL.semaforo = dados.semaforo;
 
-    document.getElementById('textareaResumoDemanda').value = (dados.demanda && dados.demanda.resumo_texto) ? dados.demanda.resumo_texto : '';
+    const dem = dados.demanda || {};
+    const resumoSalvo = dem.resumo_texto || '';
+    const stSalvo = dem.status_planilha || 'Preencher';
+    const dp = dem.dados_planilha || {};
+
+    document.getElementById('textareaResumoDemanda').value = resumoSalvo;
+    document.getElementById('selectStatusRapidoM1').value = stSalvo;
+
+    // Popula campos do Módulo 2 (Preenchimento da Planilha PRASS)
+    document.getElementById('lblItemCompetenciaM2').textContent = `Item ${ITEM_ATUAL.codigo} • ${DEMANDA_ATUAL_NOME}`;
+    document.getElementById('lblColunaExportM2').textContent = DEMANDA_ATUAL_NOME;
+    document.getElementById('selStatusGeralM2').value = stSalvo;
+    document.getElementById('textareaConsolidadoM2').value = resumoSalvo;
+
+    ['CODER', 'COCAP', 'CONEC'].forEach(s => {
+        const info = dp[s] || {};
+        document.getElementById('selStatus_' + s).value = info.status || stSalvo;
+        document.getElementById('inpSubitem_' + s).value = info.subitem || '';
+        document.getElementById('inpRef_' + s).value = info.referencias || '';
+        document.getElementById('txtResp_' + s).value = info.texto || '';
+    });
+
     renderizarSemaforoTopo(dados.semaforo);
     renderizarChecklistNaTela();
+}
+
+function definirStatusRapidoM2(novoSt) {
+    document.getElementById('selStatusGeralM2').value = novoSt;
+    document.getElementById('selectStatusRapidoM1').value = novoSt;
+    ['CODER', 'COCAP', 'CONEC'].forEach(s => {
+        if (ITEM_ATUAL.areas_atribuidas.includes(s)) {
+            document.getElementById('selStatus_' + s).value = novoSt;
+        }
+    });
+    salvarModuloPlanilha(false);
+}
+
+function consolidarSetoresNaCelula() {
+    const partes = [];
+    ['CODER', 'COCAP', 'CONEC'].forEach(s => {
+        const st = document.getElementById('selStatus_' + s).value;
+        const sub = document.getElementById('inpSubitem_' + s).value.trim();
+        const ref = document.getElementById('inpRef_' + s).value.trim();
+        const txt = document.getElementById('txtResp_' + s).value.trim();
+        if (txt || sub || ref) {
+            let Bloco = `GERED/${s} [${st}]`;
+            if (sub) Bloco += `\nSubitem: ${sub}`;
+            if (ref) Bloco += `\nReferências/Chamados: ${ref}`;
+            if (txt) Bloco += `\n${txt}`;
+            partes.push(Bloco);
+        }
+    });
+
+    if (CHECKLIST_ATUAL.length > 0) {
+        const linhasChk = CHECKLIST_ATUAL.map(c => {
+            const st = c.concluido ? 'CONCLUÍDO' : 'EM ANDAMENTO';
+            return `• [${c.setor} - ${st}] ${c.titulo}`;
+        });
+        partes.push(`Resumo das Entregas no Checklist:\n` + linhasChk.join('\n'));
+    }
+
+    if (partes.length === 0) {
+        alert('Preencha ao menos um campo de CODER, COCAP ou CONEC acima para juntar no texto consolidado.');
+        return;
+    }
+    const unido = partes.join('\n\n');
+    document.getElementById('textareaConsolidadoM2').value = unido;
+    document.getElementById('textareaResumoDemanda').value = unido;
+    salvarModuloPlanilha(false);
+}
+
+async function salvarModuloPlanilha(mostrarAlerta) {
+    if (!DEMANDA_ATUAL_ID) return;
+    const stGeral = document.getElementById('selStatusGeralM2').value;
+    const txtCons = document.getElementById('textareaConsolidadoM2').value;
+    document.getElementById('selectStatusRapidoM1').value = stGeral;
+    document.getElementById('textareaResumoDemanda').value = txtCons;
+
+    const dadosPlanilha = {};
+    ['CODER', 'COCAP', 'CONEC'].forEach(s => {
+        dadosPlanilha[s] = {
+            status: document.getElementById('selStatus_' + s).value,
+            subitem: document.getElementById('inpSubitem_' + s).value.trim(),
+            referencias: document.getElementById('inpRef_' + s).value.trim(),
+            texto: document.getElementById('txtResp_' + s).value.trim()
+        };
+    });
+
+    const r = await fetch('/api/planilha/salvar-celula', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            demanda_id: DEMANDA_ATUAL_ID,
+            status_planilha: stGeral,
+            resumo_texto: txtCons,
+            dados_planilha: dadosPlanilha
+        })
+    });
+    if (r.ok) {
+        const d = await r.json();
+        const msg = document.getElementById('msgSalvoPlanilhaM2');
+        msg.textContent = `✔ Planilha salva às ${d.horario}`;
+        setTimeout(() => { msg.textContent = ''; }, 3000);
+        if (mostrarAlerta) alert('Dados da planilha salvos com sucesso! Você já pode clicar em Exportar Planilha PRASS (.xlsx).');
+        await carregarSistema();
+    }
+}
+
+function renderizarMatrizPanoramica() {
+    const box = document.getElementById('tabelaMatrizContainer');
+    if (!box || !ESTADO_ITENS.length) return;
+    const colsPrincipais = ['Status 08/2026', 'Status 09/2026', 'Status 10/2026', 'Complemento ANS 26/10', 'Status 11/2026', 'Status 12/2026'];
+
+    let html = `<table class="matriz-prass"><thead><tr><th>Item PRASS</th><th>Áreas</th>`;
+    colsPrincipais.forEach(c => { html += `<th>${c}</th>`; });
+    html += `</tr></thead><tbody>`;
+
+    ESTADO_ITENS.forEach(it => {
+        html += `<tr onclick="selecionarItemDaMatriz('${it.codigo}')">`;
+        html += `<td><b>${it.titulo}</b></td>`;
+        html += `<td>${it.areas_atribuidas.join(', ')}</td>`;
+        colsPrincipais.forEach(nomeCol => {
+            const dObj = (it.demandas || []).find(d => d.nome === nomeCol);
+            const st = dObj ? (dObj.status_planilha || 'Preencher') : 'Preencher';
+            const cor = st.startsWith('Finalizado') ? 'VERDE' : (st === 'Preencher' ? 'VERMELHO' : 'AMARELO');
+            const resumoCurto = dObj && dObj.resumo_texto ? dObj.resumo_texto.substring(0, 95) + '...' : '(Preencher)';
+            html += `<td><span class="area-pill ${cor}">${st.split('/')[0].trim()}</span><div style="margin-top:4px;color:#475569;font-size:11px;">${resumoCurto}</div></td>`;
+        });
+        html += `</tr>`;
+    });
+
+    html += `</tbody></table>`;
+    box.innerHTML = html;
+}
+
+function selecionarItemDaMatriz(cod) {
+    const alvo = ESTADO_ITENS.find(i => i.codigo === cod);
+    if (!alvo) return;
+    ITEM_ATUAL = alvo;
+    renderizarSidebar();
+    renderizarItemAtual();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function renderizarSemaforoTopo(semaforo) {
